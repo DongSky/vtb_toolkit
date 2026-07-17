@@ -7,8 +7,8 @@ use vtb_account::{Credentials, QrLogin};
 
 #[derive(Default)]
 pub struct AppState {
-    /// room_id → danmaku streaming task.
-    pub danmaku: Mutex<HashMap<u64, JoinHandle<()>>>,
+    /// room_id → managed danmaku connection.
+    pub danmaku: Mutex<HashMap<u64, DanmakuHandles>>,
     /// room_id → (monitor task, recorder task).
     pub recorders: Mutex<HashMap<u64, RecorderHandles>>,
     /// job id → offline job task.
@@ -19,6 +19,11 @@ pub struct AppState {
     pub credentials: Mutex<Option<Credentials>>,
     /// In-progress QR login session.
     pub qr_login: tokio::sync::Mutex<Option<QrLogin>>,
+}
+
+pub struct DanmakuHandles {
+    pub pump: JoinHandle<()>,
+    pub stop: tokio::sync::watch::Sender<bool>,
 }
 
 pub struct RecorderHandles {
@@ -32,7 +37,7 @@ impl AppState {
             .lock()
             .unwrap()
             .get(&room_id)
-            .map(|h| !h.is_finished())
+            .map(|h| !h.pump.is_finished())
             .unwrap_or(false)
     }
 

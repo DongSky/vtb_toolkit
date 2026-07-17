@@ -23,6 +23,7 @@ rand = "0.8"
 md-5 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+async-trait = "0.1.89"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

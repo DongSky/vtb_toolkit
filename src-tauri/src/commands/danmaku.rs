@@ -1,8 +1,10 @@
-//! Danmaku commands: connect a room, stream LiveEvents to the frontend.
+//! Danmaku commands: connect a room via the managed (auto-reconnecting)
+//! client, stream LiveEvents + connection states to the frontend.
 
 use crate::state::AppState;
 use tauri::{AppHandle, Emitter, State};
-use vtb_danmaku::{DanmakuClient, DanmakuClientConfig};
+use vtb_danmaku::api::BiliApi;
+use vtb_danmaku::{spawn_managed, ConnState, DanmakuClientConfig, ManagedEvent};
 
 /// Event channel name the frontend listens on.
 pub const EVENT_DANMAKU: &str = "danmaku://event";
@@ -13,6 +15,36 @@ struct StatusPayload {
     room_id: u64,
     connected: bool,
     message: String,
+}
+
+fn state_payload(room_id: u64, s: &ConnState) -> StatusPayload {
+    match s {
+        ConnState::Connecting { attempt } => StatusPayload {
+            room_id,
+            connected: false,
+            message: format!("连接中 (第{}次)", attempt + 1),
+        },
+        ConnState::Connected { host } => StatusPayload {
+            room_id,
+            connected: true,
+            message: format!("已连接 {host}"),
+        },
+        ConnState::Disconnected { reason } => StatusPayload {
+            room_id,
+            connected: false,
+            message: format!("连接断开: {reason}"),
+        },
+        ConnState::Reconnecting { attempt, delay_ms } => StatusPayload {
+            room_id,
+            connected: false,
+            message: format!("{}s 后重连 (第{}次)", delay_ms / 1000, attempt + 1),
+        },
+        ConnState::Stopped => StatusPayload {
+            room_id,
+            connected: false,
+            message: "已停止".into(),
+        },
+    }
 }
 
 #[tauri::command]
@@ -27,46 +59,40 @@ pub async fn danmaku_connect(
 
     // Use login credentials when available: real uid + cookies mean
     // unmasked usernames in danmaku.
-    let creds = state.creds();
-    let client = match (&creds, DanmakuClientConfig::anonymous(room_id)) {
-        (Some(c), mut cfg) => {
-            cfg.uid = c.dede_user_id;
-            cfg.buvid = c.buvid3.clone();
-            let http = state.api_client()?;
-            DanmakuClient::with_api(cfg, vtb_danmaku::api::BiliApi::new(http))
+    let mut config = DanmakuClientConfig::anonymous(room_id);
+    let api = match state.creds() {
+        Some(c) => {
+            config.uid = c.dede_user_id;
+            config.buvid = c.buvid3.clone();
+            BiliApi::new(state.api_client()?)
         }
-        (None, cfg) => DanmakuClient::new(cfg).map_err(|e| e.to_string())?,
+        None => BiliApi::default_client().map_err(|e| e.to_string())?,
     };
-    let (mut rx, conn_handle) = client.connect().await.map_err(|e| e.to_string())?;
 
-    let _ = app.emit(
-        EVENT_DANMAKU_STATUS,
-        StatusPayload {
-            room_id,
-            connected: true,
-            message: "connected".into(),
-        },
-    );
+    let (mut rx, stop) = spawn_managed(api, config);
 
     let app2 = app.clone();
     let pump = tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
-            if app2.emit(EVENT_DANMAKU, &ev).is_err() {
+            let keep_going = match ev {
+                ManagedEvent::Live(live) => app2.emit(EVENT_DANMAKU, &live).is_ok(),
+                ManagedEvent::State(s) => {
+                    let done = matches!(s, ConnState::Stopped);
+                    let _ = app2.emit(EVENT_DANMAKU_STATUS, state_payload(room_id, &s));
+                    !done
+                }
+            };
+            if !keep_going {
                 break;
             }
         }
-        conn_handle.abort();
-        let _ = app2.emit(
-            EVENT_DANMAKU_STATUS,
-            StatusPayload {
-                room_id,
-                connected: false,
-                message: "disconnected".into(),
-            },
-        );
     });
 
-    state.danmaku.lock().unwrap().insert(room_id, pump);
+    state
+        .danmaku
+        .lock()
+        .unwrap()
+        .insert(room_id, crate::state::DanmakuHandles { pump, stop });
     Ok(())
 }
 
@@ -75,8 +101,11 @@ pub async fn danmaku_disconnect(
     state: State<'_, AppState>,
     room_id: u64,
 ) -> Result<(), String> {
-    if let Some(handle) = state.danmaku.lock().unwrap().remove(&room_id) {
-        handle.abort();
+    if let Some(handles) = state.danmaku.lock().unwrap().remove(&room_id) {
+        // Graceful: the supervisor exits its loop and emits Stopped, which
+        // ends the pump. Abort as a backstop.
+        let _ = handles.stop.send(true);
+        handles.pump.abort();
         Ok(())
     } else {
         Err(format!("room {room_id} not connected"))
@@ -90,7 +119,7 @@ pub async fn danmaku_status(
     let map = state.danmaku.lock().unwrap();
     Ok(map
         .iter()
-        .filter(|(_, h)| !h.is_finished())
+        .filter(|(_, h)| !h.pump.is_finished())
         .map(|(id, _)| *id)
         .collect())
 }

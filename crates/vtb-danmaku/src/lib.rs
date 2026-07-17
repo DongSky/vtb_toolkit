@@ -13,6 +13,8 @@ pub mod api;
 pub mod client;
 pub mod wbi;
 pub mod pb;
+pub mod managed;
 
 pub use client::{DanmakuClient, DanmakuClientConfig};
 pub use error::DanmakuError;
+pub use managed::{spawn_managed, ConnState, ManagedEvent};

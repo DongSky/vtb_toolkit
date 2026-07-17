@@ -4961,6 +4961,7 @@ dependencies = [
 name = "vtb-danmaku"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "brotli 7.0.0",
  "byteorder",
