@@ -95,11 +95,10 @@ pub async fn recorder_start(
         },
     );
     let auto = AutoRecorder::new(
-        AutoRecorderConfig {
-            room_id,
-            output_root: PathBuf::from(&options.output_dir),
-            segment,
-            extension_override: None,
+        {
+            let mut cfg = AutoRecorderConfig::new(room_id, PathBuf::from(&options.output_dir));
+            cfg.segment = segment;
+            cfg
         },
         BiliResolver::new(StreamApi::new(stream_client), qn::ORIGINAL),
         FfmpegRecorder::default(),

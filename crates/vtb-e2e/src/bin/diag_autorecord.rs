@@ -26,12 +26,7 @@ async fn main() {
     let dir = std::path::PathBuf::from("/tmp/vtb-e2e-auto");
     let _ = std::fs::remove_dir_all(&dir);
 
-    let config = AutoRecorderConfig {
-        room_id: real,
-        output_root: dir.clone(),
-        segment: SegmentPolicy::Single,
-        extension_override: None,
-    };
+    let config = AutoRecorderConfig::new(real, dir.clone());
     let resolver = BiliResolver::new(StreamApi::new(client), qn::ORIGINAL);
     let auto = AutoRecorder::new(config, resolver, FfmpegRecorder::default());
 

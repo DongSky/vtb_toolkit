@@ -160,6 +160,7 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
 }
 
 /// A recorder that shells out to ffmpeg.
+#[derive(Debug, Clone)]
 pub struct FfmpegRecorder {
     /// Path to the ffmpeg binary (defaults to "ffmpeg").
     pub binary: PathBuf,

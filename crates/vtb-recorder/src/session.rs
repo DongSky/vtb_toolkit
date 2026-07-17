@@ -15,6 +15,9 @@ pub struct SessionMetadata {
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub segments: Vec<SegmentInfo>,
+    /// Post-recording health verdict (codec / picture / audio checks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<crate::check::RecordingHealth>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,13 +61,29 @@ impl RecordingSession {
     /// Collect segment files matching `stem`/`ext`, compute sizes, and build
     /// finalized metadata with `ended_at = now`.
     pub fn finalize(&self, stem: &str, ext: &str) -> Result<SessionMetadata> {
-        let segments = collect_segments(&self.output_dir, stem, ext)?;
+        let segments = collect_segments(&self.output_dir, stem, &[ext])?;
         Ok(SessionMetadata {
             room_id: self.room_id,
             title: self.title.clone(),
             started_at: self.started_at,
             ended_at: Some(Utc::now()),
             segments,
+            health: None,
+        })
+    }
+
+    /// Like [`finalize`], but collects any common media container matching
+    /// the stem — used by supervised sessions whose parts may vary.
+    pub fn finalize_media(&self, stem: &str) -> Result<SessionMetadata> {
+        let segments =
+            collect_segments(&self.output_dir, stem, &["flv", "ts", "mkv", "m4s"])?;
+        Ok(SessionMetadata {
+            room_id: self.room_id,
+            title: self.title.clone(),
+            started_at: self.started_at,
+            ended_at: Some(Utc::now()),
+            segments,
+            health: None,
         })
     }
 
@@ -77,17 +96,17 @@ impl RecordingSession {
     }
 }
 
-fn collect_segments(dir: &Path, stem: &str, ext: &str) -> Result<Vec<SegmentInfo>> {
+fn collect_segments(dir: &Path, stem: &str, exts: &[&str]) -> Result<Vec<SegmentInfo>> {
     let mut out = Vec::new();
     if !dir.exists() {
         return Ok(out);
     }
-    let dot_ext = format!(".{ext}");
+    let suffixes: Vec<String> = exts.iter().map(|e| format!(".{e}")).collect();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with(stem) && name.ends_with(&dot_ext) {
+            if name.starts_with(stem) && suffixes.iter().any(|s| name.ends_with(s)) {
                 let size = entry.metadata()?.len();
                 out.push(SegmentInfo {
                     path: path.clone(),
