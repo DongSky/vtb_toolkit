@@ -27,6 +27,8 @@ pub fn run() {
             commands::recorder::recorder_status,
             commands::pipeline::offline_process,
             commands::pipeline::offline_cancel,
+            commands::subtitle::live_subtitle_start,
+            commands::subtitle::live_subtitle_stop,
             commands::profile::profile_save,
             commands::profile::profile_load,
             commands::profile::profile_list,

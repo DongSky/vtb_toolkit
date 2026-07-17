@@ -12,6 +12,8 @@ pub struct AppState {
     pub recorders: Mutex<HashMap<u64, RecorderHandles>>,
     /// job id → offline job task.
     pub jobs: Mutex<HashMap<String, JoinHandle<()>>>,
+    /// room_id → live subtitle task.
+    pub subtitles: Mutex<HashMap<u64, JoinHandle<()>>>,
 }
 
 pub struct RecorderHandles {

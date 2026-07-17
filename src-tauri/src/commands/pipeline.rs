@@ -72,33 +72,42 @@ struct DonePayload {
     clips: usize,
 }
 
-fn build_backend(o: &OfflineOptions) -> Result<Arc<dyn LlmBackend>, String> {
-    let key = o
-        .llm_api_key
-        .clone()
+/// Shared LLM backend construction (also used by the live subtitle command).
+pub fn build_backend_pub(
+    provider: Option<&str>,
+    api_key: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<Arc<dyn LlmBackend>, String> {
+    let key = api_key
         .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
         .ok_or("no LLM API key provided")?;
-    match o.llm_provider.as_deref().unwrap_or("anthropic") {
+    match provider.unwrap_or("anthropic") {
         "openai" => Ok(Arc::new(OpenAiCompatBackend::new(
-            o.llm_base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+            base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
             key,
-            o.llm_model.clone().unwrap_or_else(|| "gpt-4o-mini".into()),
+            model.unwrap_or_else(|| "gpt-4o-mini".into()),
         ))),
         _ => {
             let mut b = AnthropicBackend::new(
                 key,
-                o.llm_model
-                    .clone()
-                    .unwrap_or_else(|| "claude-haiku-4-5".into()),
+                model.unwrap_or_else(|| "claude-haiku-4-5".into()),
             );
-            if let Some(url) = &o.llm_base_url {
-                b = b.with_base_url(url.clone());
+            if let Some(url) = base_url {
+                b = b.with_base_url(url);
             }
             Ok(Arc::new(b))
         }
     }
+}
+
+fn build_backend(o: &OfflineOptions) -> Result<Arc<dyn LlmBackend>, String> {
+    build_backend_pub(
+        o.llm_provider.as_deref(),
+        o.llm_api_key.clone(),
+        o.llm_model.clone(),
+        o.llm_base_url.clone(),
+    )
 }
 
 #[tauri::command]

@@ -3,12 +3,14 @@ import "./App.css";
 import DanmakuPanel from "./components/DanmakuPanel";
 import RecorderPanel from "./components/RecorderPanel";
 import OfflinePanel from "./components/OfflinePanel";
+import SubtitlePanel from "./components/SubtitlePanel";
 
-type Tab = "danmaku" | "recorder" | "offline";
+type Tab = "danmaku" | "recorder" | "subtitle" | "offline";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "danmaku", label: "弹幕" },
   { id: "recorder", label: "录制" },
+  { id: "subtitle", label: "实时字幕" },
   { id: "offline", label: "离线处理" },
 ];
 
@@ -31,6 +33,7 @@ function App() {
       </nav>
       {tab === "danmaku" && <DanmakuPanel />}
       {tab === "recorder" && <RecorderPanel />}
+      {tab === "subtitle" && <SubtitlePanel />}
       {tab === "offline" && <OfflinePanel />}
     </main>
   );
