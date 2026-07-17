@@ -12,6 +12,13 @@ fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
+/// Read the whole settings object (for other command modules).
+pub fn read_settings(app: &tauri::AppHandle) -> serde_json::Value {
+    settings_path(app)
+        .map(|p| load_settings(&p))
+        .unwrap_or_else(|_| serde_json::json!({}))
+}
+
 /// Load the whole settings object (empty object when absent/corrupt).
 pub fn load_settings(path: &Path) -> serde_json::Value {
     std::fs::read_to_string(path)

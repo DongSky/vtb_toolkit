@@ -44,6 +44,12 @@ pub struct OfflineOptions {
     /// Streamer profile JSON path for personalized translation.
     #[serde(default)]
     pub profile_path: Option<String>,
+    /// Burn bilingual subtitles into clips (requires ffmpeg with libass).
+    #[serde(default)]
+    pub burn_subtitles: bool,
+    /// Multimodal rescoring of highlights (vision model, needs API key).
+    #[serde(default)]
+    pub multimodal: bool,
 }
 
 fn default_true() -> bool {
@@ -139,6 +145,7 @@ pub async fn offline_process(
         let mut cfg = JobConfig::new(&options.input, &options.output_dir);
         cfg.translate = options.translate;
         cfg.highlights = options.highlights;
+        cfg.burn_subtitles = options.burn_subtitles;
         cfg.target_lang = options.target_lang.clone();
         cfg.danmaku_log = options.danmaku_log.as_ref().map(PathBuf::from);
         cfg.session_start = options
@@ -173,6 +180,23 @@ pub async fn offline_process(
         );
 
         let mut job = OfflineJob::new(cfg, engine);
+        if options.multimodal {
+            let key = options
+                .llm_api_key
+                .clone()
+                .filter(|k| !k.is_empty())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                .or_else(|| vtb_account::Secrets::get("llm-api-key").ok().flatten())
+                .ok_or("多模态复核需要 Anthropic API key")?;
+            let judge = vtb_highlight::multimodal::AnthropicJudge::new(
+                key,
+                options
+                    .llm_model
+                    .clone()
+                    .unwrap_or_else(|| "claude-haiku-4-5".into()),
+            );
+            job = job.with_judge(Arc::new(judge));
+        }
         if options.translate {
             let backend = build_backend(&options)?;
             let profile = match &options.profile_path {

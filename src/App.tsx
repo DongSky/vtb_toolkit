@@ -6,14 +6,18 @@ import OfflinePanel from "./components/OfflinePanel";
 import SubtitlePanel from "./components/SubtitlePanel";
 import LoginPanel from "./components/LoginPanel";
 import ObsPanel from "./components/ObsPanel";
+import RoomsPanel from "./components/RoomsPanel";
+import ReviewPanel from "./components/ReviewPanel";
 
-type Tab = "danmaku" | "recorder" | "subtitle" | "offline" | "obs" | "account";
+type Tab = "rooms" | "danmaku" | "recorder" | "subtitle" | "offline" | "review" | "obs" | "account";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "rooms", label: "房间" },
   { id: "danmaku", label: "弹幕" },
   { id: "recorder", label: "录制" },
   { id: "subtitle", label: "实时字幕" },
   { id: "offline", label: "离线处理" },
+  { id: "review", label: "复盘" },
   { id: "obs", label: "OBS输出" },
   { id: "account", label: "账号" },
 ];
@@ -35,10 +39,12 @@ function App() {
           </button>
         ))}
       </nav>
+      {tab === "rooms" && <RoomsPanel />}
       {tab === "danmaku" && <DanmakuPanel />}
       {tab === "recorder" && <RecorderPanel />}
       {tab === "subtitle" && <SubtitlePanel />}
       {tab === "offline" && <OfflinePanel />}
+      {tab === "review" && <ReviewPanel />}
       {tab === "obs" && <ObsPanel />}
       {tab === "account" && <LoginPanel />}
     </main>

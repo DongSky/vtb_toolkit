@@ -3,6 +3,7 @@ import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { RecorderEventPayload } from "../types";
+import NotifySettings from "./NotifySettings";
 
 export default function RecorderPanel() {
   const [roomId, setRoomId] = usePersisted("rec.room", "");
@@ -118,6 +119,7 @@ export default function RecorderPanel() {
           </li>
         ))}
       </ul>
+      <NotifySettings />
       <pre className="log" data-testid="rec-log">
         {log.join("\n")}
       </pre>

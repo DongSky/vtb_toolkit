@@ -2,6 +2,7 @@
 //! subtitles → highlights → clips, with per-stage progress reporting.
 
 use crate::danmaku_log;
+use crate::danmaku_xml;
 use crate::energy::rms_series;
 use crate::error::{PipelineError, Result};
 use crate::subtitle;
@@ -56,6 +57,10 @@ pub struct JobConfig {
     pub ffmpeg: PathBuf,
     pub fusion: FusionConfig,
     pub streaming: StreamingConfig,
+    /// Burn bilingual subtitles into exported clips (re-encode).
+    pub burn_subtitles: bool,
+    /// Highlight analysis window size in ms.
+    pub window_ms: u64,
 }
 
 impl JobConfig {
@@ -71,6 +76,8 @@ impl JobConfig {
             ffmpeg: PathBuf::from("ffmpeg"),
             fusion: FusionConfig::default(),
             streaming: StreamingConfig::default(),
+            burn_subtitles: false,
+            window_ms: 10_000,
         }
     }
 }
@@ -83,14 +90,37 @@ pub struct JobOutput {
     pub highlights: Vec<Highlight>,
     pub subtitle_files: Vec<PathBuf>,
     pub clip_files: Vec<PathBuf>,
+    /// Bilibili-compatible danmaku XML, when a danmaku log was provided.
+    #[serde(default)]
+    pub danmaku_xml: Option<PathBuf>,
+    /// Per-window signal curves (高能进度条 data).
+    #[serde(default)]
+    pub signals_json: Option<PathBuf>,
 }
 
 pub struct OfflineJob {
     config: JobConfig,
     asr: Arc<dyn AsrEngine>,
     translator: Option<Arc<dyn LlmBackend>>,
+    judge: Option<Arc<dyn vtb_highlight::multimodal::MultimodalJudge>>,
     profile: StreamerProfile,
     progress: Option<mpsc::Sender<JobProgress>>,
+}
+
+/// Transcript text overlapping `[start_ms, end_ms]`, newline-joined and
+/// capped for prompt size.
+fn excerpt(transcript: &[TranscriptSegment], start_ms: u64, end_ms: u64) -> String {
+    let mut out = String::new();
+    for seg in transcript {
+        if seg.end_ms >= start_ms && seg.start_ms <= end_ms {
+            out.push_str(&seg.text);
+            out.push('\n');
+            if out.len() > 2000 {
+                break;
+            }
+        }
+    }
+    out
 }
 
 impl OfflineJob {
@@ -99,9 +129,19 @@ impl OfflineJob {
             config,
             asr,
             translator: None,
+            judge: None,
             profile: StreamerProfile::default(),
             progress: None,
         }
+    }
+
+    /// Attach a multimodal judge for highlight rescoring + titling.
+    pub fn with_judge(
+        mut self,
+        judge: Arc<dyn vtb_highlight::multimodal::MultimodalJudge>,
+    ) -> Self {
+        self.judge = Some(judge);
+        self
     }
 
     pub fn with_translator(
@@ -200,7 +240,7 @@ impl OfflineJob {
         // 5. Highlights.
         if self.config.highlights {
             self.report(Stage::DetectHighlights, None, "检测高能片段").await;
-            let window_ms = 10_000u64;
+            let window_ms = self.config.window_ms.max(1000);
             let audio = audio_energy_scores(&rms_series(&pcm, 1000), window_ms, total_ms);
 
             let mut signals = SignalSet {
@@ -214,6 +254,10 @@ impl OfflineJob {
                 (&self.config.danmaku_log, self.config.session_start)
             {
                 entries = danmaku_log::read_log(log)?;
+                // Export a Bilibili-compatible XML alongside the analysis.
+                let xml_path = self.config.output_dir.join("danmaku.xml");
+                danmaku_xml::write_xml(&entries, start, &xml_path)?;
+                out.danmaku_xml = Some(xml_path);
                 let offsets = danmaku_log::to_offsets(&entries, start);
                 signals.density = Some(danmaku_density(&offsets, window_ms, total_ms));
                 signals.keyword = Some(keyword_score(&offsets, window_ms, total_ms));
@@ -221,14 +265,74 @@ impl OfflineJob {
             }
 
             out.highlights = detect_highlights(&signals, &self.config.fusion, total_ms);
+
+            // Optional multimodal rescoring: sample frames from each
+            // candidate, ask a vision model for a refined score + title.
+            if let Some(judge) = &self.judge {
+                let n = out.highlights.len().max(1);
+                for i in 0..out.highlights.len() {
+                    self.report(
+                        Stage::DetectHighlights,
+                        Some(i as f64 / n as f64),
+                        format!("AI 复核 {}/{}", i + 1, n),
+                    )
+                    .await;
+                    let (start, end) = (out.highlights[i].start_ms, out.highlights[i].end_ms);
+                    let frames = match vtb_highlight::multimodal::extract_frames(
+                        &self.config.ffmpeg,
+                        &self.config.input,
+                        start,
+                        end,
+                        3,
+                    )
+                    .await
+                    {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!("frame extraction failed: {e}");
+                            continue;
+                        }
+                    };
+                    let transcript_excerpt = excerpt(&out.transcript, start, end);
+                    match judge.judge(&frames, &transcript_excerpt, "").await {
+                        Ok(v) => vtb_highlight::multimodal::apply_verdict(
+                            &mut out.highlights[i],
+                            &v,
+                            0.5,
+                        ),
+                        Err(e) => tracing::warn!("multimodal judge failed: {e}"),
+                    }
+                }
+            }
+
             let hl_json = self.config.output_dir.join("highlights.json");
             std::fs::write(&hl_json, serde_json::to_string_pretty(&out.highlights)?)?;
+
+            // Per-window signal curves for the 高能进度条 review UI.
+            let curve = serde_json::json!({
+                "window_ms": window_ms,
+                "total_ms": total_ms,
+                "density": signals.density.as_ref().map(|s| s.values.clone()),
+                "keyword": signals.keyword.as_ref().map(|s| s.values.clone()),
+                "gift": signals.gift.as_ref().map(|s| s.values.clone()),
+                "audio": signals.audio.as_ref().map(|s| s.values.clone()),
+            });
+            let curve_path = self.config.output_dir.join("signals.json");
+            std::fs::write(&curve_path, serde_json::to_string(&curve)?)?;
+            out.signals_json = Some(curve_path);
 
             // 6. Cut clips.
             let clip_opts = vtb_highlight::clip::ClipOptions {
                 input: self.config.input.clone(),
                 output_dir: self.config.output_dir.join("clips"),
                 reencode: false,
+                // Burn the bilingual ASS into clips when requested and
+                // translations were produced.
+                burn_subtitles: self
+                    .config
+                    .burn_subtitles
+                    .then(|| self.config.output_dir.join("subtitles.bilingual.ass"))
+                    .filter(|p| p.exists()),
             };
             let n = out.highlights.len().max(1);
             for (i, h) in out.highlights.iter().enumerate() {
@@ -425,6 +529,12 @@ mod tests {
             .subtitle_files
             .iter()
             .any(|p| p.to_string_lossy().contains("bilingual")));
+        // Danmaku XML exported alongside the highlight analysis.
+        let xml_path = out.danmaku_xml.expect("danmaku_xml path set");
+        assert_eq!(xml_path, dir.path().join("out/danmaku.xml"));
+        let xml = std::fs::read_to_string(&xml_path).unwrap();
+        assert!(xml.contains("<chatserver>chat.bilibili.com</chatserver>"));
+        assert!(xml.contains(">草</d>"));
     }
 
     #[tokio::test]
@@ -435,5 +545,59 @@ mod tests {
         let job = OfflineJob::new(cfg, Arc::new(MockEngine::empty()));
         // Fails at audio extraction (missing file) or config — either way Err.
         assert!(job.run().await.is_err());
+    }
+
+    /// Mock judge that titles every candidate deterministically.
+    struct MockJudge;
+
+    #[async_trait::async_trait]
+    impl vtb_highlight::multimodal::MultimodalJudge for MockJudge {
+        async fn judge(
+            &self,
+            frames: &[Vec<u8>],
+            transcript: &str,
+            _danmaku: &str,
+        ) -> vtb_highlight::error::Result<vtb_highlight::multimodal::MultimodalVerdict> {
+            assert!(!frames.is_empty(), "expected sampled frames");
+            let _ = transcript;
+            Ok(vtb_highlight::multimodal::MultimodalVerdict {
+                score: 0.9,
+                title: "AI标题".into(),
+                reason: "mock复核".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn multimodal_judge_rescoring_titles_highlights() {
+        if !ffmpeg_on_path() {
+            eprintln!("ffmpeg not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("rec.mp4");
+        generate_test_video(&video).await;
+
+        let mut cfg = JobConfig::new(&video, dir.path().join("out"));
+        cfg.fusion.threshold = 0.5;
+        cfg.fusion.min_len_ms = 0;
+        cfg.fusion.pad_ms = 0;
+        // 6s test video needs small windows to get >1 window (z-scores of a
+        // single window are flat → no candidates).
+        cfg.window_ms = 1000;
+
+        let job = OfflineJob::new(cfg, Arc::new(MockEngine::empty()))
+            .with_judge(Arc::new(MockJudge));
+        let out = job.run().await.unwrap();
+        assert!(!out.highlights.is_empty(), "need candidates for this test");
+        for h in &out.highlights {
+            assert_eq!(h.title.as_deref(), Some("AI标题"));
+            assert!(h.reason.contains("AI复核"));
+            assert_eq!(h.signals.multimodal, Some(0.9));
+        }
+        // Persisted highlights carry the titles too.
+        let json =
+            std::fs::read_to_string(dir.path().join("out/highlights.json")).unwrap();
+        assert!(json.contains("AI标题"));
     }
 }

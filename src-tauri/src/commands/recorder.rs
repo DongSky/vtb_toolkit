@@ -49,6 +49,34 @@ impl StatusSource for ApiStatusSource {
     }
 }
 
+/// Build the notifier fan-out from the "notify" object in settings.json.
+fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
+    let cfg = super::config::read_settings(app);
+    match serde_json::from_value::<vtb_notify::NotifyConfig>(cfg["notify"].clone()) {
+        Ok(c) => c.build(),
+        Err(_) => vtb_notify::MultiNotifier(vec![]),
+    }
+}
+
+/// Fire-and-forget notification (never blocks the event pump).
+fn push_notify(
+    notifier: &std::sync::Arc<vtb_notify::MultiNotifier>,
+    kind: vtb_notify::NotifyKind,
+    title: String,
+    body: String,
+) {
+    if notifier.0.is_empty() {
+        return;
+    }
+    let notifier = notifier.clone();
+    tokio::spawn(async move {
+        let n = notifier
+            .notify_all(&vtb_notify::NotifyEvent { title, body, kind })
+            .await;
+        tracing::debug!("notified {n} channels");
+    });
+}
+
 /// Handle to a per-session danmaku JSONL logger.
 struct DanmakuLogHandle {
     stop: tokio::sync::watch::Sender<bool>,
@@ -62,12 +90,23 @@ impl DanmakuLogHandle {
     }
 }
 
+/// Path of the shared stats database.
+pub fn stats_db_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("stats.sqlite3"))
+}
+
 /// Record every live event of `room_id` into `<dir>/danmaku.jsonl` until
-/// stopped (managed connection: reconnects on its own).
+/// stopped (managed connection: reconnects on its own). Events are also
+/// written to the stats DB for the 记录簿/场次报告.
 fn start_danmaku_log(
     room_id: u64,
     dir: &std::path::Path,
     creds: Option<vtb_account::Credentials>,
+    stats_db: Option<std::path::PathBuf>,
 ) -> Option<DanmakuLogHandle> {
     use vtb_pipeline::danmaku_log::{DanmakuLogWriter, LogEntry};
 
@@ -94,12 +133,20 @@ fn start_danmaku_log(
     };
 
     let (mut rx, stop) = vtb_danmaku::spawn_managed(api, config);
+    let session_id = dir.to_string_lossy().into_owned();
+    let stats = stats_db.and_then(|p| vtb_stats::StatsDb::open(&p).ok());
     let task = tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
             match ev {
                 vtb_danmaku::ManagedEvent::Live(live) => {
+                    let now = chrono::Utc::now();
+                    if let Some(db) = &stats {
+                        if let Err(e) = db.record(&session_id, &live, now) {
+                            tracing::warn!("stats record failed: {e}");
+                        }
+                    }
                     let entry = LogEntry {
-                        received_at: chrono::Utc::now(),
+                        received_at: now,
                         event: live,
                     };
                     if writer.write(&entry).is_ok() {
@@ -177,17 +224,26 @@ pub async fn recorder_start(
     });
     let recorder_task = tokio::spawn(auto.run(mon_rx, rec_tx));
 
-    // Pump recorder events to the frontend, and keep a danmaku JSONL
-    // logger running for the lifetime of each recording session so the
-    // offline pipeline gets highlight signals for free.
+    // Pump recorder events to the frontend, keep a danmaku JSONL logger
+    // running per session, and push notifications (Bark/TG/ServerChan/
+    // webhook) configured in settings.
     let app2 = app.clone();
     let creds = state.creds();
+    let notifier = std::sync::Arc::new(load_notifier(&app));
+    let stats_db = stats_db_path(&app);
     tokio::spawn(async move {
         let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
             let payload = match ev {
                 RecorderEvent::RecordingStarted { room_id, output_dir } => {
-                    danmaku_log = start_danmaku_log(room_id, &output_dir, creds.clone());
+                    danmaku_log =
+                        start_danmaku_log(room_id, &output_dir, creds.clone(), stats_db.clone());
+                    push_notify(
+                        &notifier,
+                        vtb_notify::NotifyKind::RecordingStarted,
+                        format!("房间 {room_id} 开始录制"),
+                        output_dir.to_string_lossy().into_owned(),
+                    );
                     RecorderPayload::Started {
                         room_id,
                         output_dir: output_dir.to_string_lossy().into_owned(),
@@ -197,6 +253,16 @@ pub async fn recorder_start(
                     if let Some(h) = danmaku_log.take() {
                         h.stop().await;
                     }
+                    push_notify(
+                        &notifier,
+                        vtb_notify::NotifyKind::RecordingStopped,
+                        format!("房间 {room_id} 录制结束"),
+                        format!(
+                            "{} 段, {:.1} MB",
+                            metadata.segments.len(),
+                            metadata.total_bytes() as f64 / 1_048_576.0
+                        ),
+                    );
                     RecorderPayload::Stopped {
                         room_id,
                         total_bytes: metadata.total_bytes(),
@@ -204,6 +270,12 @@ pub async fn recorder_start(
                     }
                 }
                 RecorderEvent::RecordingError { room_id, message } => {
+                    push_notify(
+                        &notifier,
+                        vtb_notify::NotifyKind::RecordingError,
+                        format!("房间 {room_id} 录制异常"),
+                        message.clone(),
+                    );
                     RecorderPayload::Error { room_id, message }
                 }
             };

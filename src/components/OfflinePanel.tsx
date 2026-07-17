@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
+import ModelPicker from "./ModelPicker";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { JobDonePayload, JobProgressPayload } from "../types";
@@ -10,6 +11,8 @@ export default function OfflinePanel() {
   const [modelPath, setModelPath] = usePersisted("off.modelPath", "");
   const [danmakuLog, setDanmakuLog] = useState("");
   const [translate, setTranslate] = usePersisted("off.translate", false);
+  const [burnSubs, setBurnSubs] = usePersisted("off.burnSubs", false);
+  const [multimodal, setMultimodal] = usePersisted("off.multimodal", false);
   const [apiKey, setApiKey] = useState("");
   const [progress, setProgress] = useState<JobProgressPayload | null>(null);
   const [done, setDone] = useState<JobDonePayload | null>(null);
@@ -61,6 +64,8 @@ export default function OfflinePanel() {
           model_path: modelPath,
           danmaku_log: danmakuLog || undefined,
           translate,
+          burn_subtitles: burnSubs,
+          multimodal,
           llm_api_key: apiKey || undefined,
         },
       });
@@ -92,6 +97,7 @@ export default function OfflinePanel() {
           value={modelPath}
           onChange={(e) => setModelPath(e.target.value)}
         />
+        <ModelPicker value={modelPath} onChange={setModelPath} />
         <input
           data-testid="off-danmaku"
           placeholder="弹幕日志 JSONL（可选，用于高能检测）"
@@ -106,6 +112,24 @@ export default function OfflinePanel() {
             onChange={(e) => setTranslate(e.target.checked)}
           />
           启用翻译
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            data-testid="off-burnsubs"
+            checked={burnSubs}
+            onChange={(e) => setBurnSubs(e.target.checked)}
+          />
+          切片烧录双语字幕（需翻译，需带 libass 的 ffmpeg）
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            data-testid="off-multimodal"
+            checked={multimodal}
+            onChange={(e) => setMultimodal(e.target.checked)}
+          />
+          多模态 AI 复核高能片段（自动打分与起标题）
         </label>
         {translate && (
           <input

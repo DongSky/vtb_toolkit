@@ -60,6 +60,66 @@ pub struct StreamingAsr {
     window: PcmWindow,
 }
 
+/// Whisper hallucination / non-speech filter. Catches bracket annotations
+/// (`[BLANK_AUDIO]`, `[Music]`, `(拍手)`) and degenerate repeats the model
+/// emits on music/noise.
+pub fn is_hallucination(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return true;
+    }
+    // Known training-data hallucination phrases (subtitle-credit spam etc.).
+    const PHRASES: &[&str] = &[
+        "Amara.org",
+        "字幕由",
+        "字幕志愿者",
+        "请不吝点赞",
+        "订阅我的频道",
+        "明镜与点点栏目",
+        "Thanks for watching",
+        "ご視聴ありがとう",
+    ];
+    if PHRASES.iter().any(|p| t.contains(p)) {
+        return true;
+    }
+    let bracket_chars: usize = t.chars().filter(|c| "[]()（）".contains(*c)).count();
+    if bracket_chars >= 2 {
+        let inner: String = t
+            .chars()
+            .filter(|c| !"[]()（）".contains(*c))
+            .collect::<String>()
+            .trim()
+            .to_uppercase();
+        if inner.contains("BLANK_AUDIO")
+            || inner.contains("MUSIC")
+            || inner.contains("APPLAUSE")
+            || inner.contains("NOISE")
+            || inner.contains("SILENCE")
+            || inner.contains("音乐")
+            || inner.contains("掌声")
+            || inner.contains("字幕")
+        {
+            return true;
+        }
+        // Pure short annotation with nothing outside brackets.
+        if t.starts_with(['[', '(', '（'])
+            && t.ends_with([']', ')', '）'])
+            && inner.chars().count() <= 12
+        {
+            return true;
+        }
+    }
+    // Degenerate repetition: ≤2 distinct chars repeated many times.
+    let chars: Vec<char> = t.chars().filter(|c| !c.is_whitespace()).collect();
+    if chars.len() >= 8 {
+        let unique: std::collections::HashSet<&char> = chars.iter().collect();
+        if unique.len() <= 2 {
+            return true;
+        }
+    }
+    false
+}
+
 impl StreamingAsr {
     pub fn new(engine: Arc<dyn AsrEngine>, config: StreamingConfig) -> Self {
         Self {
@@ -92,6 +152,9 @@ impl StreamingAsr {
                 continue;
             };
             match self.engine.transcribe(&pcm).await {
+                Ok(rec) if is_hallucination(&rec.text) => {
+                    tracing::debug!("filtered hallucination: {}", rec.text);
+                }
                 Ok(rec) if !rec.text.is_empty() => {
                     out.push(TranscriptSegment {
                         start_ms: span.start_ms(),
@@ -266,6 +329,20 @@ mod tests {
         assert!(seg.text.starts_with("utt-"));
         assert!(seg_rx.recv().await.is_none());
         handle.await.unwrap();
+    }
+
+    #[test]
+    fn hallucination_filter() {
+        assert!(is_hallucination("[BLANK_AUDIO]"));
+        assert!(is_hallucination(" [Music] "));
+        assert!(is_hallucination("(拍手)"));
+        assert!(is_hallucination("[音乐][音乐]"));
+        assert!(is_hallucination("字幕由Amara.org社区提供"));
+        assert!(is_hallucination("请不吝点赞 订阅 转发"));
+        assert!(is_hallucination("谢谢谢谢谢谢谢谢谢谢"));
+        assert!(!is_hallucination("今天天气不错"));
+        assert!(!is_hallucination("我们看看[游戏]里的表现")); // real sentence w/ bracket
+        assert!(!is_hallucination("Hello everyone welcome back"));
     }
 
     #[test]

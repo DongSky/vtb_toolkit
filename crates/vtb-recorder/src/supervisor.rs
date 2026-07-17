@@ -8,10 +8,14 @@
 use crate::auto::{ResolvedStream, StreamResolver};
 use crate::ffmpeg::{FfmpegRecorder, RecordOptions, SegmentPolicy};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
-#[derive(Debug, Clone)]
+/// Injectable free-space probe (tests); `None` uses [`crate::disk::free_space`].
+pub type FreeSpaceFn = Arc<dyn Fn(&Path) -> std::io::Result<u64> + Send + Sync>;
+
+#[derive(Clone)]
 pub struct SupervisorConfig {
     pub room_id: u64,
     pub output_dir: PathBuf,
@@ -26,6 +30,28 @@ pub struct SupervisorConfig {
     pub max_rapid_failures: u32,
     /// Force this container extension instead of the stream's native one.
     pub extension_override: Option<String>,
+    /// Stop recording when the output filesystem's free space drops below
+    /// this many bytes (safety net for unattended recording).
+    pub min_free_bytes: u64,
+    /// Free-space probe override for tests; `None` = real `disk::free_space`.
+    pub free_space_fn: Option<FreeSpaceFn>,
+}
+
+impl std::fmt::Debug for SupervisorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SupervisorConfig")
+            .field("room_id", &self.room_id)
+            .field("output_dir", &self.output_dir)
+            .field("stem_base", &self.stem_base)
+            .field("segment", &self.segment)
+            .field("stall_timeout", &self.stall_timeout)
+            .field("min_healthy", &self.min_healthy)
+            .field("max_rapid_failures", &self.max_rapid_failures)
+            .field("extension_override", &self.extension_override)
+            .field("min_free_bytes", &self.min_free_bytes)
+            .field("free_space_fn", &self.free_space_fn.as_ref().map(|_| "<fn>"))
+            .finish()
+    }
 }
 
 impl SupervisorConfig {
@@ -39,6 +65,8 @@ impl SupervisorConfig {
             min_healthy: Duration::from_secs(10),
             max_rapid_failures: 3,
             extension_override: None,
+            min_free_bytes: crate::disk::DEFAULT_MIN_FREE,
+            free_space_fn: None,
         }
     }
 }
@@ -50,6 +78,9 @@ pub enum SupervisorEnd {
     Stopped,
     /// Too many consecutive rapid failures (stream gone or persistent error).
     GaveUp { failures: u32, last_error: String },
+    /// Output filesystem dropped below the free-space floor; recording was
+    /// stopped to avoid filling the disk. Not retried.
+    DiskFull { free_bytes: u64 },
 }
 
 /// Progress notes emitted while supervising.
@@ -65,6 +96,7 @@ enum RunEnd {
     Stopped,
     Stalled,
     Exited(String),
+    DiskFull(u64),
 }
 
 pub async fn supervise_recording<R: StreamResolver>(
@@ -114,11 +146,12 @@ pub async fn supervise_recording<R: StreamResolver>(
             let _ = n.send(SupervisorNote::PartStarted { part }).await;
         }
 
-        let end = run_with_watchdog(child, &opts, config.stall_timeout, &mut stop).await;
+        let end = run_with_watchdog(child, &opts, config, &mut stop).await;
         let reason = match &end {
             RunEnd::Stopped => "stop".to_string(),
             RunEnd::Stalled => "stalled".to_string(),
             RunEnd::Exited(msg) => msg.clone(),
+            RunEnd::DiskFull(free) => format!("disk full: {free} bytes free"),
         };
         if let Some(n) = &notes {
             let _ = n.send(SupervisorNote::PartEnded { part, reason: reason.clone() }).await;
@@ -126,6 +159,8 @@ pub async fn supervise_recording<R: StreamResolver>(
 
         match end {
             RunEnd::Stopped => return SupervisorEnd::Stopped,
+            // A full disk won't clear itself: don't retry, surface it.
+            RunEnd::DiskFull(free_bytes) => return SupervisorEnd::DiskFull { free_bytes },
             RunEnd::Stalled | RunEnd::Exited(_) => {
                 if started.elapsed() < config.min_healthy {
                     rapid_failures += 1;
@@ -156,11 +191,11 @@ fn build_opts(config: &SupervisorConfig, stream: &ResolvedStream, stem: &str) ->
     opts
 }
 
-/// Run one ffmpeg child until stop / stall / exit.
+/// Run one ffmpeg child until stop / stall / low disk / exit.
 async fn run_with_watchdog(
     mut child: tokio::process::Child,
     opts: &RecordOptions,
-    stall_timeout: Duration,
+    config: &SupervisorConfig,
     stop: &mut watch::Receiver<bool>,
 ) -> RunEnd {
     let mut last_size = total_output_bytes(opts);
@@ -187,9 +222,22 @@ async fn run_with_watchdog(
                 if size > last_size {
                     last_size = size;
                     last_growth = tokio::time::Instant::now();
-                } else if last_growth.elapsed() >= stall_timeout {
+                } else if last_growth.elapsed() >= config.stall_timeout {
                     graceful_stop(&mut child).await;
                     return RunEnd::Stalled;
+                }
+                // Disk safety net: stop before the volume fills up. A
+                // failed probe is ignored — don't kill a healthy recording
+                // because statvfs hiccuped.
+                let free = match &config.free_space_fn {
+                    Some(f) => f(&opts.output_dir),
+                    None => crate::disk::free_space(&opts.output_dir),
+                };
+                if let Ok(free) = free {
+                    if free < config.min_free_bytes {
+                        graceful_stop(&mut child).await;
+                        return RunEnd::DiskFull(free);
+                    }
                 }
             }
         }
@@ -236,7 +284,7 @@ mod tests {
     use crate::auto::ResolvedStream;
     use crate::error::Result;
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::sync::Arc;
 
     struct CountingResolver {
@@ -353,6 +401,51 @@ mod tests {
             SupervisorEnd::GaveUp { failures, .. } => assert_eq!(failures, 2),
             other => panic!("expected GaveUp, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn low_disk_space_stops_recording_without_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let resolver = CountingResolver { calls: calls.clone(), fail: false };
+        let recorder = stalling_recorder(dir.path(), 300); // healthy writer
+
+        let mut cfg = SupervisorConfig::new(1, dir.path(), "disk");
+        cfg.min_free_bytes = 1024;
+        // Injected probe: plenty of space for the first two checks, then
+        // below the floor.
+        let probes = Arc::new(AtomicU64::new(0));
+        cfg.free_space_fn = Some(Arc::new({
+            let probes = probes.clone();
+            move |_: &Path| {
+                if probes.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Ok(u64::MAX)
+                } else {
+                    Ok(512)
+                }
+            }
+        }));
+
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        // Generous timeout: parallel-suite load can slow the 2s ticks down.
+        let end = tokio::time::timeout(
+            Duration::from_secs(60),
+            supervise_recording(&resolver, &recorder, &cfg, stop_rx, None),
+        )
+        .await
+        .expect("supervisor must end on its own when the disk fills");
+
+        assert_eq!(end, SupervisorEnd::DiskFull { free_bytes: 512 });
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "disk full must not retry");
+        assert!(probes.load(Ordering::SeqCst) >= 3, "probe ran each tick");
+
+        // The fake ffmpeg appends once per second while alive; a flat file
+        // size over a few seconds proves it was stopped.
+        let out = dir.path().join("disk-p00.flv");
+        let size_after_end = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let size_later = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        assert_eq!(size_after_end, size_later, "ffmpeg must be stopped");
     }
 
     #[tokio::test]

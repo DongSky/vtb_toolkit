@@ -300,6 +300,7 @@ pub async fn highlight_stage(
             input: recording.file.clone(),
             output_dir: workdir.join("clips"),
             reencode: false,
+            burn_subtitles: None,
         };
         match cut_clip(Path::new("ffmpeg"), &opts, h).await {
             Ok(p) => ok(format!(

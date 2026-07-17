@@ -11,6 +11,8 @@ members = [
     "crates/vtb-pipeline",
     "crates/vtb-account",
     "crates/vtb-overlay",
+    "crates/vtb-notify",
+    "crates/vtb-stats",
     "crates/vtb-e2e",
 ]
 

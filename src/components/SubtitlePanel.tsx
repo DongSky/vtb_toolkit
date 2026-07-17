@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
+import ModelPicker from "./ModelPicker";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -89,6 +90,7 @@ export default function SubtitlePanel() {
           value={modelPath}
           onChange={(e) => setModelPath(e.target.value)}
         />
+        <ModelPicker value={modelPath} onChange={setModelPath} />
         <label>
           <input
             type="checkbox"

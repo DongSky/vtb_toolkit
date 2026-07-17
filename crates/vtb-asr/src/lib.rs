@@ -15,6 +15,7 @@ pub mod audio;
 pub mod vad;
 pub mod engine;
 pub mod streaming;
+pub mod models;
 
 pub use engine::AsrEngine;
 pub use error::AsrError;

@@ -53,6 +53,9 @@ pub struct AutoRecorderConfig {
     pub remux_mp4: bool,
     /// Run the black-screen/silence health probe after the session ends.
     pub health_check: bool,
+    /// Stop recording when the output disk's free space drops below this
+    /// many bytes (safety net for unattended recording).
+    pub min_free_bytes: u64,
 }
 
 impl AutoRecorderConfig {
@@ -67,6 +70,7 @@ impl AutoRecorderConfig {
             max_rapid_failures: 3,
             remux_mp4: true,
             health_check: true,
+            min_free_bytes: crate::disk::DEFAULT_MIN_FREE,
         }
     }
 }
@@ -123,13 +127,24 @@ impl<R: StreamResolver + 'static> AutoRecorder<R> {
                         let end = end.unwrap_or(SupervisorEnd::Stopped);
                         let rec = active.take().expect("active present");
                         let room_id = self.config.room_id;
-                        if let SupervisorEnd::GaveUp { failures, last_error } = &end {
-                            let _ = tx.send(RecorderEvent::RecordingError {
-                                room_id,
-                                message: format!(
-                                    "录制中止（连续失败{failures}次）: {last_error}"
-                                ),
-                            }).await;
+                        match &end {
+                            SupervisorEnd::GaveUp { failures, last_error } => {
+                                let _ = tx.send(RecorderEvent::RecordingError {
+                                    room_id,
+                                    message: format!(
+                                        "录制中止（连续失败{failures}次）: {last_error}"
+                                    ),
+                                }).await;
+                            }
+                            SupervisorEnd::DiskFull { free_bytes } => {
+                                let _ = tx.send(RecorderEvent::RecordingError {
+                                    room_id,
+                                    message: format!(
+                                        "录制中止：磁盘空间不足（剩余 {free_bytes} 字节）"
+                                    ),
+                                }).await;
+                            }
+                            _ => {}
                         }
                         match self.finalize(rec).await {
                             Ok(metadata) => {
@@ -226,6 +241,8 @@ impl<R: StreamResolver + 'static> AutoRecorder<R> {
             min_healthy: self.config.min_healthy,
             max_rapid_failures: self.config.max_rapid_failures,
             extension_override: self.config.extension_override.clone(),
+            min_free_bytes: self.config.min_free_bytes,
+            free_space_fn: None,
         };
         let (stop_tx, stop_rx) = watch::channel(false);
         let resolver = self.resolver.clone();

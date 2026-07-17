@@ -1,3 +1,4 @@
+pub mod asr_models;
 pub mod auth;
 pub mod config;
 pub mod danmaku;
@@ -5,4 +6,7 @@ pub mod overlay;
 pub mod recorder;
 pub mod pipeline;
 pub mod profile;
+pub mod review;
+pub mod rooms;
+pub mod stats;
 pub mod subtitle;
