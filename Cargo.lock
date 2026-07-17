@@ -4671,8 +4671,11 @@ dependencies = [
 name = "vtb-translate"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
