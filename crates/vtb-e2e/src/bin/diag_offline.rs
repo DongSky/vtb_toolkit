@@ -20,10 +20,18 @@ use vtb_translate::{OpenAiCompatBackend, StreamerProfile, TranslateConfig, Trans
 async fn main() {
     let short: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(320);
     let secs: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(40);
+    // Optional 3rd arg: output directory (default /tmp/vtb-offline).
+    let workdir = std::env::args()
+        .nth(3)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/vtb-offline"));
+    // Optional 4th arg: target language (default zh). Use "en"/"ja" for
+    // Chinese streams so the same-language skip doesn't drop everything.
+    let target_lang = std::env::args().nth(4).unwrap_or_else(|| "zh".into());
 
-    let workdir = PathBuf::from("/tmp/vtb-offline");
     let _ = std::fs::remove_dir_all(&workdir);
     std::fs::create_dir_all(&workdir).unwrap();
+    println!("输出目录: {}", workdir.display());
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -47,7 +55,7 @@ async fn main() {
     });
 
     // Record video.
-    println!("录制 {secs}s 视频 + 弹幕 (room {real})…");
+    println!("录制 {secs}s 视频 + 弹幕 (room {real}, codec={})…", best.codec);
     let video = workdir.join("rec.flv");
     let ff = tokio::process::Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-y"])
@@ -62,6 +70,54 @@ async fn main() {
     let _ = collector.await;
     writer.lock().await.flush().unwrap();
 
+    // Remux to MP4 so the recording double-click plays in QuickTime
+    // (FLV isn't supported there at all). Stream copy: fast & lossless.
+    // hvc1 tag makes HEVC-in-MP4 playable on Apple players if the source
+    // ever is HEVC.
+    let video_mp4 = workdir.join("rec.mp4");
+    let is_hevc = best.codec.eq_ignore_ascii_case("hevc");
+    let mut remux = tokio::process::Command::new("ffmpeg");
+    remux
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&video)
+        .args(["-c", "copy", "-movflags", "+faststart"]);
+    if is_hevc {
+        remux.args(["-tag:v", "hvc1"]);
+    }
+    remux.arg(&video_mp4);
+    if remux.status().await.map(|s| s.success()).unwrap_or(false) {
+        println!("已生成可直接播放的 MP4: {}", video_mp4.display());
+    }
+
+    // Sanity-check the recording is not black/silent: mean luma + audio RMS.
+    if let Ok(out) = tokio::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1"])
+        .arg(&video)
+        .output()
+        .await
+    {
+        println!("视频编码: {}", String::from_utf8_lossy(&out.stdout).trim());
+    }
+    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-i"])
+        .arg(&video)
+        .args(["-map", "0:v:0", "-vf", "signalstats,metadata=print:file=-", "-frames:v", "30", "-f", "null", "-"])
+        .output()
+        .await
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lumas: Vec<f64> = text
+            .lines()
+            .filter_map(|l| l.split("signalstats.YAVG=").nth(1))
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        if !lumas.is_empty() {
+            let avg = lumas.iter().sum::<f64>() / lumas.len() as f64;
+            let verdict = if avg < 17.0 { "⚠️ 疑似黑屏" } else { "✅ 有画面" };
+            println!("画面平均亮度 YAVG={avg:.1} {verdict}");
+        }
+    }
+
     let n_lines = vtb_pipeline::danmaku_log::read_log(&log_path).map(|e| e.len()).unwrap_or(0);
     println!("弹幕日志 {n_lines} 条");
 
@@ -75,7 +131,7 @@ async fn main() {
     cfg.danmaku_log = Some(log_path.clone());
     cfg.session_start = Some(session_start);
     cfg.translate = translate;
-    cfg.target_lang = "zh".into();
+    cfg.target_lang = target_lang.clone();
     cfg.highlights = true;
     cfg.fusion.threshold = 0.6;
     cfg.fusion.min_len_ms = 0;

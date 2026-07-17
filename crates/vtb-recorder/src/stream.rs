@@ -162,12 +162,17 @@ pub fn parse_play_info(body: &str) -> Result<Vec<PlayStream>> {
     Ok(out)
 }
 
-/// Pick the best stream, preferring FLV over HLS (simpler to record) and
-/// the highest available quality.
+/// Pick the best stream: prefer FLV over HLS (simpler to record), then AVC
+/// over HEVC (bilibili's HEVC-in-FLV is a private extension that QuickTime
+/// and many players render as black/silent), then the highest quality.
 pub fn pick_best(streams: &[PlayStream]) -> Option<&PlayStream> {
-    streams
-        .iter()
-        .max_by_key(|s| (s.format.eq_ignore_ascii_case("flv") as u32, s.qn))
+    streams.iter().max_by_key(|s| {
+        (
+            s.format.eq_ignore_ascii_case("flv") as u32,
+            s.codec.eq_ignore_ascii_case("avc") as u32,
+            s.qn,
+        )
+    })
 }
 
 /// HTTP client for stream queries.
@@ -293,5 +298,27 @@ mod tests {
             },
         ];
         assert_eq!(pick_best(&streams).unwrap().url, "flv-high");
+    }
+
+    /// Regression (found live): bilibili returns avc and hevc FLV variants
+    /// at the same qn, hevc listed after avc. `max_by_key` keeps the LAST
+    /// max, so we recorded HEVC-in-FLV — which players render as a black,
+    /// silent video. AVC must win at equal qn/format.
+    #[test]
+    fn pick_best_prefers_avc_over_hevc_at_same_qn() {
+        let mk = |codec: &str, url: &str| PlayStream {
+            url: url.into(),
+            protocol: "http_stream".into(),
+            format: "flv".into(),
+            codec: codec.into(),
+            qn: 250,
+            accept_qn: vec![],
+        };
+        // hevc after avc, same qn — the exact live layout that broke.
+        let streams = vec![mk("avc", "flv-avc"), mk("hevc", "flv-hevc")];
+        assert_eq!(pick_best(&streams).unwrap().url, "flv-avc");
+        // Order-independent.
+        let streams = vec![mk("hevc", "flv-hevc"), mk("avc", "flv-avc")];
+        assert_eq!(pick_best(&streams).unwrap().url, "flv-avc");
     }
 }
