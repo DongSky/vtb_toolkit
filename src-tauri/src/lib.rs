@@ -17,8 +17,21 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::default())
+        .manage({
+            let state = AppState::default();
+            // Restore login from the OS keychain at startup.
+            use vtb_account::CredentialStore;
+            if let Ok(Some(creds)) = vtb_account::KeyringStore::default().load() {
+                tracing::info!("restored bilibili credentials for uid {}", creds.dede_user_id);
+                *state.credentials.lock().unwrap() = Some(creds);
+            }
+            state
+        })
         .invoke_handler(tauri::generate_handler![
+            commands::auth::auth_qr_start,
+            commands::auth::auth_qr_poll,
+            commands::auth::auth_status,
+            commands::auth::auth_logout,
             commands::danmaku::danmaku_connect,
             commands::danmaku::danmaku_disconnect,
             commands::danmaku::danmaku_status,

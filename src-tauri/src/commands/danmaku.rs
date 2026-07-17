@@ -25,8 +25,18 @@ pub async fn danmaku_connect(
         return Err(format!("room {room_id} already connected"));
     }
 
-    let client = DanmakuClient::new(DanmakuClientConfig::anonymous(room_id))
-        .map_err(|e| e.to_string())?;
+    // Use login credentials when available: real uid + cookies mean
+    // unmasked usernames in danmaku.
+    let creds = state.creds();
+    let client = match (&creds, DanmakuClientConfig::anonymous(room_id)) {
+        (Some(c), mut cfg) => {
+            cfg.uid = c.dede_user_id;
+            cfg.buvid = c.buvid3.clone();
+            let http = state.api_client()?;
+            DanmakuClient::with_api(cfg, vtb_danmaku::api::BiliApi::new(http))
+        }
+        (None, cfg) => DanmakuClient::new(cfg).map_err(|e| e.to_string())?,
+    };
     let (mut rx, conn_handle) = client.connect().await.map_err(|e| e.to_string())?;
 
     let _ = app.emit(

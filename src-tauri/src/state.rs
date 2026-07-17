@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::task::JoinHandle;
+use vtb_account::{Credentials, QrLogin};
 
 #[derive(Default)]
 pub struct AppState {
@@ -14,6 +15,10 @@ pub struct AppState {
     pub jobs: Mutex<HashMap<String, JoinHandle<()>>>,
     /// room_id → live subtitle task.
     pub subtitles: Mutex<HashMap<u64, JoinHandle<()>>>,
+    /// Logged-in credentials (loaded from keychain at startup).
+    pub credentials: Mutex<Option<Credentials>>,
+    /// In-progress QR login session.
+    pub qr_login: tokio::sync::Mutex<Option<QrLogin>>,
 }
 
 pub struct RecorderHandles {
@@ -39,4 +44,15 @@ impl AppState {
             .map(|h| !h.monitor.is_finished())
             .unwrap_or(false)
     }
+
+    /// Snapshot of the current credentials, if logged in.
+    pub fn creds(&self) -> Option<Credentials> {
+        self.credentials.lock().unwrap().clone()
+    }
+
+    /// A reqwest client carrying login cookies when available.
+    pub fn api_client(&self) -> Result<reqwest::Client, String> {
+        vtb_account::build_client(self.creds().as_ref()).map_err(|e| e.to_string())
+    }
 }
+

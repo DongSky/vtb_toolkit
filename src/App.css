@@ -237,3 +237,23 @@ button:disabled {
 .theme-error {
   color: #d32f2f;
 }
+
+/* login panel */
+.qr-box {
+  width: 260px;
+  background: white;
+  padding: 8px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+
+.qr-box svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.login-note {
+  opacity: 0.7;
+  font-size: 13px;
+}

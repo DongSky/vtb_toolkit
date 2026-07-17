@@ -1,0 +1,18 @@
+[package]
+name = "vtb-account"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+qrcode = "0.14"
+url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

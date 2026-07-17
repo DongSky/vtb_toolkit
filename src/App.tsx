@@ -4,14 +4,16 @@ import DanmakuPanel from "./components/DanmakuPanel";
 import RecorderPanel from "./components/RecorderPanel";
 import OfflinePanel from "./components/OfflinePanel";
 import SubtitlePanel from "./components/SubtitlePanel";
+import LoginPanel from "./components/LoginPanel";
 
-type Tab = "danmaku" | "recorder" | "subtitle" | "offline";
+type Tab = "danmaku" | "recorder" | "subtitle" | "offline" | "account";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "danmaku", label: "弹幕" },
   { id: "recorder", label: "录制" },
   { id: "subtitle", label: "实时字幕" },
   { id: "offline", label: "离线处理" },
+  { id: "account", label: "账号" },
 ];
 
 function App() {
@@ -35,6 +37,7 @@ function App() {
       {tab === "recorder" && <RecorderPanel />}
       {tab === "subtitle" && <SubtitlePanel />}
       {tab === "offline" && <OfflinePanel />}
+      {tab === "account" && <LoginPanel />}
     </main>
   );
 }

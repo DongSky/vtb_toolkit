@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod danmaku;
 pub mod recorder;
 pub mod pipeline;

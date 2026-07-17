@@ -70,6 +70,11 @@ pub async fn recorder_start(
         return Err(format!("room {room_id} already monitored"));
     }
 
+    // Cookie-authenticated clients unlock original-quality (qn=10000)
+    // streams; anonymous callers still work at lower quality.
+    let stream_client = state.api_client().or_else(|_| make_client())?;
+    let status_client = stream_client.clone();
+
     let segment = match options.segment_mode.as_deref() {
         Some("duration") => SegmentPolicy::ByDuration {
             seconds: options.segment_value.unwrap_or(3600) as u32,
@@ -86,7 +91,7 @@ pub async fn recorder_start(
     let monitor = Monitor::new(
         mon_cfg,
         ApiStatusSource {
-            api: StreamApi::new(make_client()?),
+            api: StreamApi::new(status_client),
         },
     );
     let auto = AutoRecorder::new(
@@ -96,7 +101,7 @@ pub async fn recorder_start(
             segment,
             extension_override: None,
         },
-        BiliResolver::new(StreamApi::new(make_client()?), qn::ORIGINAL),
+        BiliResolver::new(StreamApi::new(stream_client), qn::ORIGINAL),
         FfmpegRecorder::default(),
     );
 
