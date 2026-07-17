@@ -9,6 +9,7 @@ members = [
     "crates/vtb-translate",
     "crates/vtb-highlight",
     "crates/vtb-pipeline",
+    "crates/vtb-e2e",
 ]
 
 [workspace.package]

@@ -12,6 +12,7 @@ pub mod messages;
 pub mod api;
 pub mod client;
 pub mod wbi;
+pub mod pb;
 
 pub use client::{DanmakuClient, DanmakuClientConfig};
 pub use error::DanmakuError;

@@ -20,6 +20,7 @@ pub fn parse_cmd(room_id: u64, v: &Value) -> Option<LiveEvent> {
         "SEND_GIFT" => parse_gift(room_id, v),
         "GUARD_BUY" => parse_guard_buy(room_id, v),
         "INTERACT_WORD" => parse_interact(room_id, v),
+        "INTERACT_WORD_V2" => parse_interact_v2(room_id, v),
         "LIKE_INFO_V3_CLICK" => parse_like(room_id, v),
         "LIVE" => Some(LiveEvent::LiveStart {
             room_id,
@@ -199,6 +200,39 @@ fn parse_like(room_id: u64, v: &Value) -> Option<LiveEvent> {
             .unwrap_or("")
             .to_string(),
         timestamp: Utc::now(),
+    }))
+}
+
+/// Parse `INTERACT_WORD_V2` — since 2024 the payload is a base64 protobuf in
+/// `data.pb` rather than plain JSON. We extract only the fields we need with
+/// a minimal wire-format reader (no prost dependency).
+///
+/// Observed protobuf schema (from live capture):
+///   field 2  (len)    = uname
+///   field 5  (varint) = msg_type (1=enter, 2=follow)
+///   field 6  (varint) = room_id
+///   field 7  (varint) = timestamp (unix secs)
+///   field 15 (varint) = uid-ish score (not the real uid; left 0)
+fn parse_interact_v2(room_id: u64, v: &Value) -> Option<LiveEvent> {
+    use base64::Engine;
+    let pb_b64 = v.get("data")?.get("pb")?.as_str()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(pb_b64)
+        .ok()?;
+    let fields = crate::pb::parse_fields(&bytes);
+
+    let msg_type = fields.varint(5).unwrap_or(1);
+    if msg_type != 1 {
+        // only enters (2=follow, 3=share) are surfaced as Enter events
+        return None;
+    }
+    let username = fields.string(2).unwrap_or_default();
+    let ts = ts_from_secs_or_now(fields.varint(7).map(|s| s as i64));
+    Some(LiveEvent::Enter(EnterMsg {
+        room_id,
+        uid: 0, // real uid not present in V2 pb
+        username,
+        timestamp: ts,
     }))
 }
 

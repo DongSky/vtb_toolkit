@@ -1,0 +1,24 @@
+[package]
+name = "vtb-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+vtb-common = { path = "../vtb-common" }
+vtb-danmaku = { path = "../vtb-danmaku" }
+vtb-recorder = { path = "../vtb-recorder" }
+vtb-asr = { path = "../vtb-asr", features = ["whisper"] }
+vtb-translate = { path = "../vtb-translate" }
+vtb-highlight = { path = "../vtb-highlight" }
+vtb-pipeline = { path = "../vtb-pipeline", features = ["whisper"] }
+tokio = { workspace = true, features = ["full"] }
+chrono.workspace = true
+serde_json.workspace = true
+async-trait = "0.1"
+reqwest.workspace = true
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+libc = "0.2"

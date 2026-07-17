@@ -161,6 +161,8 @@ mod tests {
             hangover_frames: 3,
             min_speech_frames: 2,
             max_speech_frames: 1000,
+            adaptive: false,
+            noise_mult: 2.5,
         }
     }
 

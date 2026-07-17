@@ -14,7 +14,9 @@ pub const FRAME_LEN: usize = (SAMPLE_RATE as usize * FRAME_MS as usize) / 1000;
 
 #[derive(Debug, Clone)]
 pub struct VadConfig {
-    /// RMS threshold above which a frame counts as speech.
+    /// Absolute RMS floor: a frame is never "speech" below this, regardless
+    /// of the adaptive threshold. Guards against treating dead silence as
+    /// speech when the noise floor is ~0.
     pub threshold: f32,
     /// Keep an utterance open across up to this many silent frames.
     pub hangover_frames: usize,
@@ -23,6 +25,13 @@ pub struct VadConfig {
     /// Force-close an utterance after this many frames (whisper's sweet
     /// spot is ≤ 30 s; default 20 s).
     pub max_speech_frames: usize,
+    /// Enable adaptive noise-floor tracking. When on, a frame counts as
+    /// speech if its RMS exceeds `max(threshold, noise_floor * noise_mult)`.
+    /// This lets quiet gaps in a noisy stream (漫展/BGM) still split
+    /// utterances instead of the whole stream being one 20 s blob.
+    pub adaptive: bool,
+    /// Speech must exceed the tracked noise floor by this factor.
+    pub noise_mult: f32,
 }
 
 impl Default for VadConfig {
@@ -32,6 +41,8 @@ impl Default for VadConfig {
             hangover_frames: 10,        // 300 ms
             min_speech_frames: 8,       // 240 ms
             max_speech_frames: 667,     // ~20 s
+            adaptive: true,
+            noise_mult: 2.5,
         }
     }
 }
@@ -70,6 +81,10 @@ pub struct Vad {
     silent_run: usize,
     speech_frames: usize,
     finished: Vec<SpeechSpan>,
+    /// Adaptive noise-floor estimate (EMA of quiet frames' RMS).
+    noise_floor: f32,
+    /// Whether the noise floor has been seeded yet.
+    seeded: bool,
 }
 
 impl Vad {
@@ -82,6 +97,8 @@ impl Vad {
             silent_run: 0,
             speech_frames: 0,
             finished: Vec::new(),
+            noise_floor: 0.0,
+            seeded: false,
         }
     }
 
@@ -92,12 +109,33 @@ impl Vad {
         while self.buffer.len() - consumed >= FRAME_LEN {
             let abs_start = self.buffer_offset + consumed;
             let frame = &self.buffer[consumed..consumed + FRAME_LEN];
-            let is_speech = frame_rms(frame) >= self.config.threshold;
+            let rms = frame_rms(frame);
+            let is_speech = self.classify(rms);
             self.process_frame(abs_start, is_speech);
             consumed += FRAME_LEN;
         }
         self.buffer.drain(..consumed);
         self.buffer_offset += consumed;
+    }
+
+    /// Decide whether a frame is speech, updating the adaptive noise floor.
+    fn classify(&mut self, rms: f32) -> bool {
+        if !self.config.adaptive {
+            return rms >= self.config.threshold;
+        }
+        if !self.seeded {
+            self.noise_floor = rms;
+            self.seeded = true;
+        }
+        let dynamic = (self.noise_floor * self.config.noise_mult).max(self.config.threshold);
+        let is_speech = rms >= dynamic;
+        // Update the noise floor from non-speech frames only, so speech
+        // energy doesn't inflate it. Track down fast, up slow.
+        if !is_speech {
+            let alpha = if rms < self.noise_floor { 0.3 } else { 0.05 };
+            self.noise_floor += alpha * (rms - self.noise_floor);
+        }
+        is_speech
     }
 
     fn process_frame(&mut self, abs_start: usize, is_speech: bool) {
@@ -189,11 +227,14 @@ mod tests {
     }
 
     fn cfg() -> VadConfig {
+        // Fixed threshold for the core state-machine tests (deterministic).
         VadConfig {
             threshold: 0.01,
             hangover_frames: 3,
             min_speech_frames: 2,
             max_speech_frames: 1000,
+            adaptive: false,
+            noise_mult: 2.5,
         }
     }
 
@@ -264,6 +305,51 @@ mod tests {
         };
         assert_eq!(s.start_ms(), 1000);
         assert_eq!(s.end_ms(), 3000);
+    }
+
+    #[test]
+    fn adaptive_splits_over_noise_floor() {
+        // Simulate a noisy stream: constant background at 0.05 (well above
+        // the fixed 0.01 floor) with two louder speech bursts at 0.5.
+        // A fixed-threshold VAD sees the whole thing as one utterance;
+        // adaptive should split on the quieter background gap.
+        let mut out = Vec::new();
+        let seg = |amp: f32, frames: usize, out: &mut Vec<f32>| {
+            for i in 0..frames * FRAME_LEN {
+                out.push(amp * ((i as f32) * 0.37).sin());
+            }
+        };
+        seg(0.05, 6, &mut out); // background
+        seg(0.5, 8, &mut out); // speech 1
+        seg(0.05, 8, &mut out); // background gap
+        seg(0.5, 8, &mut out); // speech 2
+        seg(0.05, 6, &mut out); // background
+
+        let cfg = VadConfig {
+            threshold: 0.01,
+            hangover_frames: 3,
+            min_speech_frames: 2,
+            max_speech_frames: 1000,
+            adaptive: true,
+            noise_mult: 2.5,
+        };
+        let spans = detect_spans(&out, cfg);
+        assert_eq!(spans.len(), 2, "adaptive VAD should split into 2, got {spans:?}");
+
+        // A fixed threshold at 0.01 would merge everything into one span.
+        let fixed = VadConfig {
+            adaptive: false,
+            ..VadConfig {
+                threshold: 0.01,
+                hangover_frames: 3,
+                min_speech_frames: 2,
+                max_speech_frames: 1000,
+                adaptive: false,
+                noise_mult: 2.5,
+            }
+        };
+        let fixed_spans = detect_spans(&out, fixed);
+        assert_eq!(fixed_spans.len(), 1, "fixed threshold merges: {fixed_spans:?}");
     }
 
     #[test]

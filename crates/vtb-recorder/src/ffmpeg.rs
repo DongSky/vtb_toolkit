@@ -78,6 +78,18 @@ impl RecordOptions {
     }
 }
 
+/// Map a container extension to the ffmpeg muxer name used by the segment
+/// sub-muxer. FLV→flv, TS→mpegts, MP4→mp4, others fall back to the extension.
+fn segment_muxer(extension: &str) -> String {
+    match extension.to_ascii_lowercase().as_str() {
+        "flv" => "flv".into(),
+        "ts" | "mts" | "m2ts" => "mpegts".into(),
+        "mp4" | "m4v" => "mp4".into(),
+        "mkv" => "matroska".into(),
+        other => other.into(),
+    }
+}
+
 /// Builds the ffmpeg argument vector for the given options.
 ///
 /// Kept pure (no process spawning) so it is fully unit-testable.
@@ -130,9 +142,12 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
             // Reset timestamps so each segment plays from 0.
             args.push("-reset_timestamps".into());
             args.push("1".into());
-            // Cut on keyframes for clean segment boundaries.
-            args.push("-segment_format_options".into());
-            args.push("movflags=+faststart".into());
+            // Force the segment sub-muxer to match the chosen container so
+            // FLV/TS aren't fed MP4-only muxer defaults (which fail the
+            // header write). Without this ffmpeg guesses from the %03d
+            // template extension, but being explicit is safer.
+            args.push("-segment_format".into());
+            args.push(segment_muxer(&opts.extension).into());
         }
         SegmentPolicy::BySize { bytes } => {
             args.push("-fs".into());
@@ -277,6 +292,7 @@ mod tests {
     #[test]
     fn duration_segmenting_adds_segment_muxer() {
         let mut o = opts();
+        o.extension = "flv".into();
         o.segment = SegmentPolicy::ByDuration { seconds: 300 };
         let s: Vec<String> = build_args(&o)
             .iter()
@@ -286,6 +302,19 @@ mod tests {
         assert_eq!(s[fi + 1], "segment");
         let ti = s.iter().position(|x| x == "-segment_time").unwrap();
         assert_eq!(s[ti + 1], "300");
+        // Must pin the sub-muxer to the container (regression: MP4-only
+        // movflags fed to an FLV segment broke the header write).
+        let mi = s.iter().position(|x| x == "-segment_format").unwrap();
+        assert_eq!(s[mi + 1], "flv");
+        assert!(!s.iter().any(|x| x.contains("movflags")));
+    }
+
+    #[test]
+    fn segment_muxer_maps_containers() {
+        assert_eq!(segment_muxer("flv"), "flv");
+        assert_eq!(segment_muxer("ts"), "mpegts");
+        assert_eq!(segment_muxer("MP4"), "mp4");
+        assert_eq!(segment_muxer("mkv"), "matroska");
     }
 
     #[test]

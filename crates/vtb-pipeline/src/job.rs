@@ -131,7 +131,11 @@ impl OfflineJob {
         }
     }
 
-    pub async fn run(&self) -> Result<JobOutput> {
+    /// Run the job to completion, consuming it. Consuming `self` guarantees
+    /// the progress sender is dropped when the job ends, so a receiver loop
+    /// `while let Some(p) = rx.recv().await` terminates instead of
+    /// deadlocking (regression found in live testing).
+    pub async fn run(self) -> Result<JobOutput> {
         std::fs::create_dir_all(&self.config.output_dir)?;
         let mut out = JobOutput::default();
 
@@ -322,6 +326,42 @@ mod tests {
         assert!(stages.contains(&Stage::Transcribe));
     }
 
+    /// Regression: `run` must consume the job so its progress sender drops
+    /// on completion; a `while rx.recv()` pump then terminates. With
+    /// `run(&self)` this deadlocked (job outlived run, channel never closed).
+    #[tokio::test]
+    async fn progress_channel_closes_after_run() {
+        if !ffmpeg_on_path() {
+            eprintln!("ffmpeg not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("rec.mp4");
+        generate_test_video(&video).await;
+
+        let mut cfg = JobConfig::new(&video, dir.path().join("out"));
+        cfg.highlights = false;
+        let (tx, mut rx) = mpsc::channel(64);
+        let job = OfflineJob::new(cfg, Arc::new(MockEngine::empty())).with_progress(tx);
+
+        // Pump in a task exactly like real callers do.
+        let pump = tokio::spawn(async move {
+            let mut n = 0;
+            while rx.recv().await.is_some() {
+                n += 1;
+            }
+            n
+        });
+
+        job.run().await.unwrap();
+        // Must complete promptly — not hang forever.
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), pump)
+            .await
+            .expect("pump deadlocked: progress sender not dropped")
+            .unwrap();
+        assert!(n > 0, "expected progress events");
+    }
+
     #[tokio::test]
     async fn job_with_danmaku_log_and_translation() {
         if !ffmpeg_on_path() {
@@ -367,6 +407,9 @@ mod tests {
         cfg.danmaku_log = Some(log_path);
         cfg.session_start = Some(start);
         cfg.translate = true;
+        // Mock ASR reports lang "zh"; target must differ or the pipeline's
+        // same-language skip (correctly) drops every segment.
+        cfg.target_lang = "en".into();
         cfg.fusion.threshold = 0.8;
         cfg.fusion.min_len_ms = 0;
         cfg.fusion.pad_ms = 0;

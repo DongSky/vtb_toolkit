@@ -11,6 +11,16 @@ pub trait LlmBackend: Send + Sync {
     async fn complete(&self, system: &str, user: &str) -> Result<String>;
 }
 
+/// HTTP client with a hard request timeout so a hung LLM endpoint can never
+/// stall the translation pipeline indefinitely (found in live testing).
+fn default_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("reqwest client builds")
+}
+
 /// Anthropic Messages API backend.
 pub struct AnthropicBackend {
     http: reqwest::Client,
@@ -22,7 +32,7 @@ pub struct AnthropicBackend {
 impl AnthropicBackend {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http(),
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.anthropic.com".into(),
@@ -85,7 +95,7 @@ impl OpenAiCompatBackend {
         model: impl Into<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http(),
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),

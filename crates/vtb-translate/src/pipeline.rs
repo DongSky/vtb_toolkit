@@ -17,6 +17,10 @@ pub struct TranslateConfig {
     pub context_lines: usize,
     /// Skip segments shorter than this (filters "うん", "あー" filler).
     pub min_chars: usize,
+    /// Skip segments already in the target language (saves LLM calls when
+    /// e.g. a Chinese streamer's zh segments meet a zh target). Detected
+    /// language must match `target_lang` exactly. Default true.
+    pub skip_same_lang: bool,
 }
 
 impl Default for TranslateConfig {
@@ -25,6 +29,7 @@ impl Default for TranslateConfig {
             target_lang: "zh".into(),
             context_lines: 4,
             min_chars: 2,
+            skip_same_lang: true,
         }
     }
 }
@@ -62,7 +67,17 @@ impl TranslatePipeline {
 
     /// Whether a segment should be translated at all.
     pub fn should_translate(&self, seg: &TranscriptSegment) -> bool {
-        seg.is_final && seg.text.trim().chars().count() >= self.config.min_chars
+        if !seg.is_final || seg.text.trim().chars().count() < self.config.min_chars {
+            return false;
+        }
+        if self.config.skip_same_lang {
+            if let Some(lang) = &seg.lang {
+                if lang.eq_ignore_ascii_case(&self.config.target_lang) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Translate one final segment, updating rolling context.
@@ -176,6 +191,35 @@ mod tests {
         assert!(!p.should_translate(&seg("こんにちは", 0, false))); // partial
         assert!(!p.should_translate(&seg("あ", 0, true))); // too short
         assert!(p.should_translate(&seg("こんにちは", 0, true)));
+    }
+
+    #[tokio::test]
+    async fn same_language_segments_skipped() {
+        let backend = Arc::new(MockBackend::echo());
+        let p = TranslatePipeline::new(
+            backend.clone(),
+            StreamerProfile::default(),
+            TranslateConfig::default(), // target zh, skip_same_lang on
+        );
+        let mut zh_seg = seg("你好观众们", 0, true);
+        zh_seg.lang = Some("zh".into());
+        assert!(!p.should_translate(&zh_seg), "zh→zh must be skipped");
+
+        // Unknown language still translates (can't prove it's the target).
+        let mut unknown = seg("hello there", 0, true);
+        unknown.lang = None;
+        assert!(p.should_translate(&unknown));
+
+        // Opt out restores old behavior.
+        let p2 = TranslatePipeline::new(
+            backend,
+            StreamerProfile::default(),
+            TranslateConfig {
+                skip_same_lang: false,
+                ..Default::default()
+            },
+        );
+        assert!(p2.should_translate(&zh_seg));
     }
 
     #[tokio::test]
