@@ -1,0 +1,13 @@
+[package]
+name = "vtb-recorder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vtb-common = { path = "../vtb-common" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

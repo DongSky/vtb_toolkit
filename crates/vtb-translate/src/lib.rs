@@ -1,0 +1,1 @@
+//! vtb-translate — implementation pending.
