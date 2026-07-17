@@ -4760,12 +4760,17 @@ dependencies = [
 name = "vtb-pipeline"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "vtb-asr",
  "vtb-common",
+ "vtb-highlight",
+ "vtb-translate",
 ]
 
 [[package]]

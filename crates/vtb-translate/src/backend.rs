@@ -129,7 +129,7 @@ impl LlmBackend for OpenAiCompatBackend {
     }
 }
 
-#[cfg(test)]
+/// Test/mock backend (also used by downstream crates' tests).
 pub mod mock {
     use super::*;
     use std::sync::Mutex;
