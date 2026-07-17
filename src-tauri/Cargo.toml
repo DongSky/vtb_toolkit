@@ -1,18 +1,17 @@
 [package]
 name = "vtb-toolkit"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version.workspace = true
+edition.workspace = true
+description = "VTuber toolkit: danmaku, recording, ASR, translation, highlights"
+authors = ["dongsky"]
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "vtb_toolkit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["whisper"]
+whisper = ["vtb-asr/whisper", "vtb-pipeline/whisper"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -20,6 +19,20 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
 
+vtb-common = { path = "../crates/vtb-common" }
+vtb-danmaku = { path = "../crates/vtb-danmaku" }
+vtb-recorder = { path = "../crates/vtb-recorder" }
+vtb-asr = { path = "../crates/vtb-asr", default-features = false }
+vtb-translate = { path = "../crates/vtb-translate" }
+vtb-highlight = { path = "../crates/vtb-highlight" }
+vtb-pipeline = { path = "../crates/vtb-pipeline", default-features = false }
+async-trait = "0.1.89"
