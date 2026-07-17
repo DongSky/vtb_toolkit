@@ -291,6 +291,7 @@ pub async fn recorder_start(
     let creds = state.creds();
     let notifier = std::sync::Arc::new(load_notifier(&app));
     let stats_db = stats_db_path(&app);
+    let hook_settings = super::config::read_settings(&app);
     tokio::spawn(async move {
         let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
@@ -304,6 +305,14 @@ pub async fn recorder_start(
                         format!("房间 {room_id} 开始录制"),
                         output_dir.to_string_lossy().into_owned(),
                     );
+                    if let Some(s) = super::hooks::hook_for(&hook_settings, "recording_started") {
+                        super::hooks::run_hook(s, super::hooks::HookEvent {
+                            event: "recording_started".into(),
+                            room_id,
+                            path: Some(output_dir.to_string_lossy().into_owned()),
+                            message: None,
+                        });
+                    }
                     RecorderPayload::Started {
                         room_id,
                         output_dir: output_dir.to_string_lossy().into_owned(),
@@ -312,6 +321,14 @@ pub async fn recorder_start(
                 RecorderEvent::RecordingStopped { room_id, metadata } => {
                     if let Some(h) = danmaku_log.take() {
                         h.stop().await;
+                    }
+                    if let Some(s) = super::hooks::hook_for(&hook_settings, "recording_stopped") {
+                        super::hooks::run_hook(s, super::hooks::HookEvent {
+                            event: "recording_stopped".into(),
+                            room_id,
+                            path: metadata.segments.first().map(|seg| seg.path.to_string_lossy().into_owned()),
+                            message: None,
+                        });
                     }
                     push_notify(
                         &notifier,

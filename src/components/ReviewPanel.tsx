@@ -47,6 +47,7 @@ export default function ReviewPanel() {
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragStart = useRef<number | null>(null);
 
@@ -67,6 +68,20 @@ export default function ReviewPanel() {
       }
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const uploadClip = async (file: string) => {
+    setUploadMsg("上传中…");
+    try {
+      const r = await invoke<{ ok: boolean; output: string }>("biliup_upload", {
+        file,
+        title: `【切片】${file.split("/").pop()}`,
+        tags: ["虚拟主播", "切片"],
+      });
+      setUploadMsg(r.ok ? "投稿成功" : `投稿失败: ${r.output.slice(0, 300)}`);
+    } catch (e) {
+      setUploadMsg(String(e));
     }
   };
 
@@ -231,10 +246,20 @@ export default function ReviewPanel() {
               {reportMsg && <p style={{ fontSize: 12 }}>{reportMsg}</p>}
             </div>
           )}
+          {uploadMsg && <div data-testid="upload-msg">{uploadMsg}</div>}
           <h3>已有切片（{data.clips.length}）</h3>
           <ul>
             {data.clips.map((c) => (
-              <li key={c} style={{ fontSize: 12 }}>{c}</li>
+              <li key={c} style={{ fontSize: 12 }}>
+                {c}{" "}
+                <button
+                  data-testid={`clip-upload`}
+                  style={{ fontSize: 11, padding: "1px 6px" }}
+                  onClick={() => uploadClip(c)}
+                >
+                  投稿
+                </button>
+              </li>
             ))}
           </ul>
         </>

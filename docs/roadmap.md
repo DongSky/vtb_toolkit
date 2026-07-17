@@ -120,3 +120,17 @@
 2. 产品路径与诊断路径共享实现(自检、remux 等不能只活在 diag 里)。
 3. 网络协议层持续用"原始 cmd 普查"(diag_danmaku)监控 B站协议漂移(`_V2`/protobuf 化趋势)。
 4. 里程碑顺序按依赖排:M1.1(登录)阻塞原画录制与弹幕完整性,最先做;M1.5(OBS)是弹幕显示与同传两条线的共同出口。
+
+
+---
+
+## 完成状态(2026-07-18)
+
+全部四个 Phase 已实现并测试:
+
+- **Phase 1(地基)**:扫码登录+钥匙串、弹幕重连 failover、录制 watchdog+URL 续录+健康自检+MP4 remux、弹幕-视频联动录制+自动发现、OBS 浏览器源服务器(弹幕层+同传字幕条)、配置持久化+密钥入钥匙串
+- **Phase 2(生态对齐)**:多房间面板、通知(Bark/ServerChan/TG/Webhook)、SQLite 记录簿+场次报告(MD/CSV导出)、高能进度条复盘页(canvas+拖选切片)、多模态复核接线(打分+AI标题)、字幕烧录(libass 检测)、whisper 模型管理+幻觉过滤、弹幕XML导出(录播姬兼容)、磁盘安全网
+- **Phase 3(差异化)**:实时 highlight 告警(滚动z-score+冷却)、翻译有界并发+重试+用量统计、弹幕TTS(macOS)、歌切(音乐段检测)、单流复用(录制 tee PCM → 实时字幕,不重复拉流)
+- **Phase 4(平台与生态)**:Platform trait+yt-dlp 后端(YouTube/Twitch,graceful 降级)+platform_probe、本地 REST API(/api/status)、biliup 投稿(复盘页一键投稿)、脚本钩子插件(事件 JSON→stdin,30s 超时)
+
+测试:248 Rust + 48 前端 = 296 全绿;应用启动验证通过。

@@ -42,9 +42,27 @@ pub async fn overlay_start(
 ) -> Result<OverlayStatus, String> {
     let mut guard = state.overlay.lock().await;
     if guard.is_none() {
-        let server = vtb_overlay::start(&state.overlay_publisher, port.unwrap_or(0))
-            .await
-            .map_err(|e| e.to_string())?;
+        // /api/status snapshot for external automation (录播姬-style API).
+        let danmaku = state.danmaku_rooms_snapshot();
+        let recorders = state.recorder_rooms_snapshot();
+        let provider: vtb_overlay::StatusProvider = {
+            let danmaku = danmaku.clone();
+            let recorders = recorders.clone();
+            std::sync::Arc::new(move || {
+                serde_json::json!({
+                    "app": "vtb-toolkit",
+                    "danmaku_rooms": *danmaku.lock().unwrap(),
+                    "recording_rooms": *recorders.lock().unwrap(),
+                })
+            })
+        };
+        let server = vtb_overlay::start_with_status(
+            &state.overlay_publisher,
+            port.unwrap_or(0),
+            Some(provider),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         *guard = Some(server);
     }
     Ok(status_of(&state, guard.as_ref()))

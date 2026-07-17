@@ -74,6 +74,34 @@ impl AppState {
             .unwrap_or(false)
     }
 
+    /// Live snapshot handles for the REST API (cheap to clone into
+    /// closures; refreshed lazily on read).
+    pub fn danmaku_rooms_snapshot(&self) -> std::sync::Arc<Mutex<Vec<u64>>> {
+        let out = std::sync::Arc::new(Mutex::new(vec![]));
+        *out.lock().unwrap() = self
+            .danmaku
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, h)| !h.pump.is_finished())
+            .map(|(id, _)| *id)
+            .collect();
+        out
+    }
+
+    pub fn recorder_rooms_snapshot(&self) -> std::sync::Arc<Mutex<Vec<u64>>> {
+        let out = std::sync::Arc::new(Mutex::new(vec![]));
+        *out.lock().unwrap() = self
+            .recorders
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, h)| !h.monitor.is_finished())
+            .map(|(id, _)| *id)
+            .collect();
+        out
+    }
+
     /// Snapshot of the current credentials, if logged in.
     pub fn creds(&self) -> Option<Credentials> {
         self.credentials.lock().unwrap().clone()

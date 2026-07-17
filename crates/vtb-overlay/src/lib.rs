@@ -78,9 +78,13 @@ impl OverlayServer {
     }
 }
 
+/// Snapshot provider for the local REST API (`/api/status`).
+pub type StatusProvider = std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync>;
+
 #[derive(Clone)]
 struct AppCtx {
     tx: broadcast::Sender<OverlayMessage>,
+    status: Option<StatusProvider>,
 }
 
 /// Create the publisher used by the app regardless of server lifetime.
@@ -95,13 +99,25 @@ pub async fn start(
     publisher: &OverlayPublisher,
     port: u16,
 ) -> std::io::Result<OverlayServer> {
+    start_with_status(publisher, port, None).await
+}
+
+/// Start with a local REST API: `GET /api/status` returns the provider's
+/// JSON snapshot (rooms, recordings, …) for external automation.
+pub async fn start_with_status(
+    publisher: &OverlayPublisher,
+    port: u16,
+    status: Option<StatusProvider>,
+) -> std::io::Result<OverlayServer> {
     let ctx = AppCtx {
         tx: publisher.tx.clone(),
+        status,
     };
     let app = Router::new()
         .route("/overlay/danmaku", get(danmaku_page))
         .route("/overlay/subtitle", get(subtitle_page))
         .route("/ws", get(ws_handler))
+        .route("/api/status", get(api_status))
         .with_state(ctx);
 
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -131,6 +147,15 @@ async fn danmaku_page() -> Html<&'static str> {
 
 async fn subtitle_page() -> Html<&'static str> {
     Html(pages::SUBTITLE_HTML)
+}
+
+async fn api_status(State(ctx): State<AppCtx>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let body = ctx
+        .status
+        .map(|p| p())
+        .unwrap_or_else(|| serde_json::json!({"status": "ok"}));
+    axum::Json(body).into_response()
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(ctx): State<AppCtx>) -> axum::response::Response {
@@ -217,6 +242,38 @@ mod tests {
         // Port should be released; a new bind on it succeeds.
         let rebind = tokio::net::TcpListener::bind(("127.0.0.1", port)).await;
         assert!(rebind.is_ok());
+    }
+
+    #[tokio::test]
+    async fn api_status_serves_provider_snapshot() {
+        let pub1 = publisher();
+        let provider: StatusProvider = std::sync::Arc::new(|| {
+            serde_json::json!({"rooms": [24158116], "recording": true})
+        });
+        let server = start_with_status(&pub1, 0, Some(provider)).await.unwrap();
+        let v: serde_json::Value =
+            reqwest::get(format!("http://127.0.0.1:{}/api/status", server.port))
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+        assert_eq!(v["rooms"][0], 24158116);
+        assert_eq!(v["recording"], true);
+        server.shutdown().await;
+
+        // Without a provider the endpoint still answers.
+        let pub2 = publisher();
+        let server2 = start(&pub2, 0).await.unwrap();
+        let v2: serde_json::Value =
+            reqwest::get(format!("http://127.0.0.1:{}/api/status", server2.port))
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+        assert_eq!(v2["status"], "ok");
+        server2.shutdown().await;
     }
 
     #[tokio::test]

@@ -9,6 +9,7 @@ pub mod session;
 pub mod auto;
 pub mod check;
 pub mod disk;
+pub mod platform;
 pub mod supervisor;
 
 pub use auto::{AutoRecorder, AutoRecorderConfig, RecorderEvent, ResolvedStream, StreamResolver};

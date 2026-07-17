@@ -86,3 +86,22 @@ pub async fn room_info(
         recording: state.recorder_active(real) || state.recorder_active(room_id),
     })
 }
+
+/// Probe any supported platform id/URL (bilibili room, YouTube/Twitch URL
+/// via yt-dlp) — returns platform name + live status.
+#[tauri::command]
+pub async fn platform_probe(
+    state: tauri::State<'_, crate::state::AppState>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let client = state.api_client()?;
+    let platform = vtb_recorder::platform::platform_for(&id, client, vtb_recorder::stream::qn::ORIGINAL);
+    let status = platform
+        .check_live(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "platform": platform.name(),
+        "live": matches!(status, vtb_common::LiveStatus::Live),
+    }))
+}
