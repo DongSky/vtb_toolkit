@@ -111,9 +111,10 @@ pub fn auth_body(uid: u64, room_id: u64, token: &str, buvid: Option<&str>) -> Ve
     serde_json::to_vec(&obj).expect("auth json serializes")
 }
 
-/// The heartbeat packet (empty body, sent every ~30s).
+/// The heartbeat packet, sent every ~30s. Body is an empty JSON object,
+/// matching blivedm's `ws_base.py`.
 pub fn heartbeat() -> Vec<u8> {
-    encode(Operation::Heartbeat, ProtoVer::Json, b"[object Object]")
+    encode(Operation::Heartbeat, ProtoVer::Json, b"{}")
 }
 
 /// Parse the 16-byte header of a frame, returning

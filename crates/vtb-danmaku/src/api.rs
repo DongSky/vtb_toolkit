@@ -121,11 +121,16 @@ pub fn parse_danmu_info(body: &str) -> Result<DanmuInfo> {
 /// so callers can inject cookies (for higher rate limits / signed WBI).
 pub struct BiliApi {
     http: reqwest::Client,
+    signer: tokio::sync::Mutex<crate::wbi::WbiSigner>,
 }
 
 impl BiliApi {
     pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+        let signer = crate::wbi::WbiSigner::new(http.clone());
+        Self {
+            http,
+            signer: tokio::sync::Mutex::new(signer),
+        }
     }
 
     /// Build with a default client carrying a browser-like UA + referer.
@@ -135,6 +140,7 @@ impl BiliApi {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                  (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
             )
+            .cookie_store(true)
             .build()?;
         Ok(Self::new(http))
     }
@@ -152,11 +158,16 @@ impl BiliApi {
         parse_room_init(&body)
     }
 
+    /// `getDanmuInfo` requires WBI-signed params since 2025-07 (else -352).
     pub async fn danmu_info(&self, room_id: u64) -> Result<DanmuInfo> {
+        let params = [
+            ("id", room_id.to_string()),
+            ("type", "0".to_string()),
+        ];
+        let query = self.signer.lock().await.sign(&params).await?;
         let body = self
             .http
-            .get(DANMU_INFO)
-            .query(&[("id", room_id), ("type", 0)])
+            .get(format!("{DANMU_INFO}?{query}"))
             .header("Referer", "https://live.bilibili.com/")
             .send()
             .await?

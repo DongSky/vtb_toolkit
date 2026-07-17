@@ -11,6 +11,7 @@ pub mod protocol;
 pub mod messages;
 pub mod api;
 pub mod client;
+pub mod wbi;
 
 pub use client::{DanmakuClient, DanmakuClientConfig};
 pub use error::DanmakuError;

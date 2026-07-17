@@ -83,6 +83,13 @@ async fn run_connection(
     buvid: Option<String>,
     tx: mpsc::Sender<LiveEvent>,
 ) -> Result<()> {
+    // tokio-tungstenite's rustls backend needs a process-level crypto
+    // provider; install ring once (ignore the error if already set).
+    static INSTALL_CRYPTO: std::sync::Once = std::sync::Once::new();
+    INSTALL_CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+
     let url = host.wss_url();
     let (ws, _resp) = tokio_tungstenite::connect_async(&url).await?;
     let (mut write, mut read) = ws.split();
