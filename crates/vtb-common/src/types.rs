@@ -148,6 +148,7 @@ pub struct Highlight {
 pub struct HighlightSignals {
     pub danmaku_density: Option<f64>,
     pub danmaku_sentiment: Option<f64>,
+    pub gift_value: Option<f64>,
     pub audio_energy: Option<f64>,
     pub multimodal: Option<f64>,
 }
