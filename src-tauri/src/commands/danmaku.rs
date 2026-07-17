@@ -72,10 +72,15 @@ pub async fn danmaku_connect(
     let (mut rx, stop) = spawn_managed(api, config);
 
     let app2 = app.clone();
+    let publisher = state.overlay_publisher.clone();
     let pump = tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
             let keep_going = match ev {
-                ManagedEvent::Live(live) => app2.emit(EVENT_DANMAKU, &live).is_ok(),
+                ManagedEvent::Live(live) => {
+                    // Mirror to the OBS overlay (no-op when not running).
+                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku(live.clone()));
+                    app2.emit(EVENT_DANMAKU, &live).is_ok()
+                }
                 ManagedEvent::State(s) => {
                     let done = matches!(s, ConnState::Stopped);
                     let _ = app2.emit(EVENT_DANMAKU_STATUS, state_payload(room_id, &s));

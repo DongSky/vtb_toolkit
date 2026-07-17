@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use tokio::task::JoinHandle;
 use vtb_account::{Credentials, QrLogin};
 
-#[derive(Default)]
 pub struct AppState {
     /// room_id → managed danmaku connection.
     pub danmaku: Mutex<HashMap<u64, DanmakuHandles>>,
@@ -19,6 +18,24 @@ pub struct AppState {
     pub credentials: Mutex<Option<Credentials>>,
     /// In-progress QR login session.
     pub qr_login: tokio::sync::Mutex<Option<QrLogin>>,
+    /// OBS overlay: publisher lives for the whole app; server on demand.
+    pub overlay_publisher: vtb_overlay::OverlayPublisher,
+    pub overlay: tokio::sync::Mutex<Option<vtb_overlay::OverlayServer>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            danmaku: Mutex::default(),
+            recorders: Mutex::default(),
+            jobs: Mutex::default(),
+            subtitles: Mutex::default(),
+            credentials: Mutex::default(),
+            qr_login: tokio::sync::Mutex::default(),
+            overlay_publisher: vtb_overlay::publisher(),
+            overlay: tokio::sync::Mutex::default(),
+        }
+    }
 }
 
 pub struct DanmakuHandles {

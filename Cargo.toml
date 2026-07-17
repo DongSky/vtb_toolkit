@@ -10,6 +10,7 @@ members = [
     "crates/vtb-highlight",
     "crates/vtb-pipeline",
     "crates/vtb-account",
+    "crates/vtb-overlay",
     "crates/vtb-e2e",
 ]
 

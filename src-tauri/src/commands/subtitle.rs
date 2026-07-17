@@ -138,6 +138,7 @@ pub async fn live_subtitle_start(
         let mut stdout = child.stdout.take().ok_or("no ffmpeg stdout")?;
 
         let app2 = app.clone();
+        let publisher = state.overlay_publisher.clone();
         let task = tokio::spawn(async move {
             let _child = child; // keep alive; kill_on_drop stops ffmpeg on abort
             let mut asr = StreamingAsr::new(engine, StreamingConfig::default());
@@ -158,6 +159,12 @@ pub async fn live_subtitle_start(
                                 }
                                 _ => None,
                             };
+                            // Mirror to the OBS subtitle bar.
+                            publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                                text: seg.text.clone(),
+                                translated: translated.clone(),
+                                lang: seg.lang.clone(),
+                            });
                             let _ = app2.emit(
                                 EVENT_SUBTITLE,
                                 SubtitlePayload {
@@ -175,6 +182,11 @@ pub async fn live_subtitle_start(
                 }
             }
             for seg in asr.finish().await {
+                publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                    text: seg.text.clone(),
+                    translated: None,
+                    lang: seg.lang.clone(),
+                });
                 let _ = app2.emit(
                     EVENT_SUBTITLE,
                     SubtitlePayload {
@@ -187,6 +199,7 @@ pub async fn live_subtitle_start(
                     },
                 );
             }
+            publisher.publish(vtb_overlay::OverlayMessage::SubtitleClear);
         });
 
         state.subtitles.lock().unwrap().insert(room_id, task);
