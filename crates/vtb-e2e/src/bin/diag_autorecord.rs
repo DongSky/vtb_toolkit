@@ -38,9 +38,36 @@ async fn main() {
     mtx.send(MonitorEvent::WentLive { room_id: real }).await.unwrap();
 
     // Wait for the started event.
+    let mut danmaku_stop: Option<(tokio::sync::watch::Sender<bool>, tokio::task::JoinHandle<u32>)> =
+        None;
     match erx.recv().await {
         Some(RecorderEvent::RecordingStarted { room_id, output_dir }) => {
             println!("✅ RecordingStarted room={room_id} dir={}", output_dir.display());
+            // M1.4: danmaku JSONL logging into the session dir (mirrors
+            // the Tauri wiring).
+            let api = vtb_danmaku::api::BiliApi::default_client().unwrap();
+            let (mut rx, stop) = vtb_danmaku::spawn_managed(
+                api,
+                vtb_danmaku::DanmakuClientConfig::anonymous(room_id),
+            );
+            let log_path = output_dir.join("danmaku.jsonl");
+            let mut writer =
+                vtb_pipeline::danmaku_log::DanmakuLogWriter::create(&log_path).unwrap();
+            let task = tokio::spawn(async move {
+                let mut n = 0u32;
+                while let Some(ev) = rx.recv().await {
+                    if let vtb_danmaku::ManagedEvent::Live(live) = ev {
+                        let _ = writer.write(&vtb_pipeline::danmaku_log::LogEntry {
+                            received_at: chrono::Utc::now(),
+                            event: live,
+                        });
+                        let _ = writer.flush();
+                        n += 1;
+                    }
+                }
+                n
+            });
+            danmaku_stop = Some((stop, task));
         }
         Some(RecorderEvent::RecordingError { message, .. }) => {
             eprintln!("❌ 录制启动失败: {message}");
@@ -57,6 +84,12 @@ async fn main() {
 
     // Simulate going offline → triggers graceful stop + manifest export.
     mtx.send(MonitorEvent::WentOffline { room_id: real }).await.unwrap();
+    if let Some((stop, task)) = danmaku_stop.take() {
+        let _ = stop.send(true);
+        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(5), task).await {
+            println!("✅ 弹幕日志记录 {n} 条事件");
+        }
+    }
     match erx.recv().await {
         Some(RecorderEvent::RecordingStopped { room_id, metadata }) => {
             println!("✅ RecordingStopped room={room_id}");

@@ -49,6 +49,71 @@ impl StatusSource for ApiStatusSource {
     }
 }
 
+/// Handle to a per-session danmaku JSONL logger.
+struct DanmakuLogHandle {
+    stop: tokio::sync::watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl DanmakuLogHandle {
+    async fn stop(self) {
+        let _ = self.stop.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.task).await;
+    }
+}
+
+/// Record every live event of `room_id` into `<dir>/danmaku.jsonl` until
+/// stopped (managed connection: reconnects on its own).
+fn start_danmaku_log(
+    room_id: u64,
+    dir: &std::path::Path,
+    creds: Option<vtb_account::Credentials>,
+) -> Option<DanmakuLogHandle> {
+    use vtb_pipeline::danmaku_log::{DanmakuLogWriter, LogEntry};
+
+    let path = dir.join("danmaku.jsonl");
+    let mut writer = match DanmakuLogWriter::create(&path) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!("danmaku log create failed: {e}");
+            return None;
+        }
+    };
+
+    let mut config = vtb_danmaku::DanmakuClientConfig::anonymous(room_id);
+    let api = match creds {
+        Some(c) => {
+            config.uid = c.dede_user_id;
+            config.buvid = c.buvid3.clone();
+            match vtb_account::build_client(Some(&c)) {
+                Ok(client) => vtb_danmaku::api::BiliApi::new(client),
+                Err(_) => vtb_danmaku::api::BiliApi::default_client().ok()?,
+            }
+        }
+        None => vtb_danmaku::api::BiliApi::default_client().ok()?,
+    };
+
+    let (mut rx, stop) = vtb_danmaku::spawn_managed(api, config);
+    let task = tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                vtb_danmaku::ManagedEvent::Live(live) => {
+                    let entry = LogEntry {
+                        received_at: chrono::Utc::now(),
+                        event: live,
+                    };
+                    if writer.write(&entry).is_ok() {
+                        let _ = writer.flush();
+                    }
+                }
+                vtb_danmaku::ManagedEvent::State(vtb_danmaku::ConnState::Stopped) => break,
+                vtb_danmaku::ManagedEvent::State(_) => {}
+            }
+        }
+    });
+    Some(DanmakuLogHandle { stop, task })
+}
+
 fn make_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(
@@ -112,18 +177,26 @@ pub async fn recorder_start(
     });
     let recorder_task = tokio::spawn(auto.run(mon_rx, rec_tx));
 
-    // Pump recorder events to the frontend.
+    // Pump recorder events to the frontend, and keep a danmaku JSONL
+    // logger running for the lifetime of each recording session so the
+    // offline pipeline gets highlight signals for free.
     let app2 = app.clone();
+    let creds = state.creds();
     tokio::spawn(async move {
+        let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
             let payload = match ev {
                 RecorderEvent::RecordingStarted { room_id, output_dir } => {
+                    danmaku_log = start_danmaku_log(room_id, &output_dir, creds.clone());
                     RecorderPayload::Started {
                         room_id,
                         output_dir: output_dir.to_string_lossy().into_owned(),
                     }
                 }
                 RecorderEvent::RecordingStopped { room_id, metadata } => {
+                    if let Some(h) = danmaku_log.take() {
+                        h.stop().await;
+                    }
                     RecorderPayload::Stopped {
                         room_id,
                         total_bytes: metadata.total_bytes(),
@@ -135,6 +208,9 @@ pub async fn recorder_start(
                 }
             };
             let _ = app2.emit(EVENT_RECORDER, &payload);
+        }
+        if let Some(h) = danmaku_log.take() {
+            h.stop().await;
         }
     });
 

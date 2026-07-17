@@ -5,7 +5,7 @@ use crate::error::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use vtb_common::LiveEvent;
 
 /// One log line: wall-clock receive time + the event.
@@ -83,6 +83,48 @@ pub fn to_offsets<'a>(
         .collect()
 }
 
+/// What a recording session directory contains alongside the video.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveredSession {
+    pub danmaku_log: PathBuf,
+    /// From the session manifest's `started_at`, when present.
+    pub session_start: Option<DateTime<Utc>>,
+}
+
+/// Auto-discover the danmaku log + session start for a recording file:
+/// looks for `danmaku.jsonl` and a `*.meta.json` manifest in the same
+/// directory (the layout AutoRecorder produces).
+pub fn discover_session(input: &Path) -> Option<DiscoveredSession> {
+    let dir = input.parent()?;
+    let log = dir.join("danmaku.jsonl");
+    if !log.exists() {
+        return None;
+    }
+    let mut session_start = None;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".meta.json") {
+                if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        session_start = v
+                            .get("started_at")
+                            .and_then(|s| s.as_str())
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .map(|d| d.with_timezone(&Utc));
+                    }
+                }
+                break;
+            }
+        }
+    }
+    Some(DiscoveredSession {
+        danmaku_log: log,
+        session_start,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +183,37 @@ mod tests {
         assert_eq!(offsets.len(), 2);
         assert_eq!(offsets[0].0, 0);
         assert_eq!(offsets[1].0, 10_000);
+    }
+
+    #[test]
+    fn discovers_log_and_session_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("rec-p00.flv");
+        std::fs::write(&video, b"x").unwrap();
+
+        // No danmaku.jsonl yet → None.
+        assert!(discover_session(&video).is_none());
+
+        std::fs::write(dir.path().join("danmaku.jsonl"), b"").unwrap();
+        std::fs::write(
+            dir.path().join("rec.meta.json"),
+            r#"{"room_id":1,"started_at":"2026-07-17T12:00:00Z","segments":[]}"#,
+        )
+        .unwrap();
+
+        let found = discover_session(&video).unwrap();
+        assert_eq!(found.danmaku_log, dir.path().join("danmaku.jsonl"));
+        let start = found.session_start.unwrap();
+        assert_eq!(start.timestamp(), 1784289600); // 2026-07-17T12:00:00Z
+    }
+
+    #[test]
+    fn discovery_without_manifest_still_returns_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("v.flv");
+        std::fs::write(&video, b"x").unwrap();
+        std::fs::write(dir.path().join("danmaku.jsonl"), b"").unwrap();
+        let found = discover_session(&video).unwrap();
+        assert!(found.session_start.is_none());
     }
 }

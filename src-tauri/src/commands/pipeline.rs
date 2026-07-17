@@ -142,6 +142,19 @@ pub async fn offline_process(
             .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|d| d.with_timezone(&chrono::Utc));
+        // Auto-discover the sibling danmaku log + manifest (the layout our
+        // recorder produces) when not explicitly provided.
+        if cfg.danmaku_log.is_none() {
+            if let Some(found) =
+                vtb_pipeline::danmaku_log::discover_session(std::path::Path::new(&options.input))
+            {
+                tracing::info!("discovered danmaku log: {:?}", found.danmaku_log);
+                cfg.danmaku_log = Some(found.danmaku_log);
+                if cfg.session_start.is_none() {
+                    cfg.session_start = found.session_start;
+                }
+            }
+        }
 
         let lang = match options.asr_lang.as_deref() {
             None | Some("auto") => None,
