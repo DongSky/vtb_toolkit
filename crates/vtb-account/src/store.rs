@@ -56,6 +56,40 @@ impl CredentialStore for KeyringStore {
     }
 }
 
+/// Generic named secrets in the OS keychain (API keys etc.), separate from
+/// the bilibili credential entry.
+pub struct Secrets;
+
+impl Secrets {
+    const SERVICE: &'static str = "vtb-toolkit-secrets";
+
+    fn entry(name: &str) -> Result<keyring::Entry> {
+        keyring::Entry::new(Self::SERVICE, name)
+            .map_err(|e| AccountError::Keyring(e.to_string()))
+    }
+
+    pub fn set(name: &str, value: &str) -> Result<()> {
+        Self::entry(name)?
+            .set_password(value)
+            .map_err(|e| AccountError::Keyring(e.to_string()))
+    }
+
+    pub fn get(name: &str) -> Result<Option<String>> {
+        match Self::entry(name)?.get_password() {
+            Ok(v) => Ok(Some(v)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(AccountError::Keyring(e.to_string())),
+        }
+    }
+
+    pub fn delete(name: &str) -> Result<()> {
+        match Self::entry(name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(AccountError::Keyring(e.to_string())),
+        }
+    }
+}
+
 /// In-memory store for tests.
 #[derive(Default)]
 pub struct MemoryStore {

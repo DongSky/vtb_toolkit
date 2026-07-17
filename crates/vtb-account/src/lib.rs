@@ -9,7 +9,7 @@ pub mod store;
 pub use credentials::Credentials;
 pub use error::AccountError;
 pub use qr::{QrLogin, QrPollState};
-pub use store::{CredentialStore, KeyringStore, MemoryStore};
+pub use store::{CredentialStore, KeyringStore, MemoryStore, Secrets};
 
 /// Browser-like UA shared by all bilibili requests.
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \

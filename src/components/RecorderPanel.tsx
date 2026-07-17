@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
+import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { RecorderEventPayload } from "../types";
 
 export default function RecorderPanel() {
-  const [roomId, setRoomId] = useState("");
-  const [outputDir, setOutputDir] = useState("");
-  const [segmentMode, setSegmentMode] = useState("duration");
-  const [segmentValue, setSegmentValue] = useState("3600");
+  const [roomId, setRoomId] = usePersisted("rec.room", "");
+  const [outputDir, setOutputDir] = usePersisted("rec.outputDir", "");
+  const [segmentMode, setSegmentMode] = usePersisted("rec.segmentMode", "duration");
+  const [segmentValue, setSegmentValue] = usePersisted("rec.segmentValue", "3600");
   const [active, setActive] = useState<number[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);

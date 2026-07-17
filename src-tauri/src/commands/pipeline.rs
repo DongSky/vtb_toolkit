@@ -73,6 +73,7 @@ struct DonePayload {
 }
 
 /// Shared LLM backend construction (also used by the live subtitle command).
+/// Key resolution order: explicit → env → OS keychain ("llm-api-key").
 pub fn build_backend_pub(
     provider: Option<&str>,
     api_key: Option<String>,
@@ -80,8 +81,11 @@ pub fn build_backend_pub(
     base_url: Option<String>,
 ) -> Result<Arc<dyn LlmBackend>, String> {
     let key = api_key
+        .filter(|k| !k.is_empty())
         .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-        .ok_or("no LLM API key provided")?;
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+        .or_else(|| vtb_account::Secrets::get("llm-api-key").ok().flatten())
+        .ok_or("no LLM API key provided (set one in the panel or keychain)")?;
     match provider.unwrap_or("anthropic") {
         "openai" => Ok(Arc::new(OpenAiCompatBackend::new(
             base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),

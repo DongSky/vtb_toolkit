@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { LiveEvent } from "../types";
@@ -8,7 +9,7 @@ import DanmakuList from "./DanmakuList";
 import ThemeEditor from "./ThemeEditor";
 
 export default function DanmakuPanel() {
-  const [roomId, setRoomId] = useState("");
+  const [roomId, setRoomId] = usePersisted("dm.room", "");
   const [connected, setConnected] = useState<number[]>([]);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [themes, setThemes] = useState<DanmakuTheme[]>(() => allThemes());

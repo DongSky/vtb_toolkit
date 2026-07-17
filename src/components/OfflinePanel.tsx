@@ -1,19 +1,37 @@
 import { useEffect, useState } from "react";
+import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { JobDonePayload, JobProgressPayload } from "../types";
 
 export default function OfflinePanel() {
   const [input, setInput] = useState("");
-  const [outputDir, setOutputDir] = useState("");
-  const [modelPath, setModelPath] = useState("");
+  const [outputDir, setOutputDir] = usePersisted("off.outputDir", "");
+  const [modelPath, setModelPath] = usePersisted("off.modelPath", "");
   const [danmakuLog, setDanmakuLog] = useState("");
-  const [translate, setTranslate] = useState(false);
+  const [translate, setTranslate] = usePersisted("off.translate", false);
   const [apiKey, setApiKey] = useState("");
   const [progress, setProgress] = useState<JobProgressPayload | null>(null);
   const [done, setDone] = useState<JobDonePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+
+  const [keySaved, setKeySaved] = useState(false);
+  useEffect(() => {
+    Promise.resolve(invoke<boolean>("secret_exists", { name: "llm-api-key" }))
+      .then((v) => setKeySaved(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const saveKeyToKeychain = async () => {
+    if (!apiKey) return;
+    try {
+      await invoke("secret_set", { name: "llm-api-key", value: apiKey });
+      setKeySaved(true);
+    } catch {
+      /* keychain unavailable */
+    }
+  };
+
 
   useEffect(() => {
     const unProgress = listen<JobProgressPayload>("job://progress", (e) =>
@@ -92,9 +110,11 @@ export default function OfflinePanel() {
         {translate && (
           <input
             data-testid="off-apikey"
-            placeholder="LLM API Key"
+            type="password"
+            placeholder={keySaved ? "已保存到钥匙串（留空则使用）" : "LLM API Key（自动存入钥匙串）"}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            onBlur={saveKeyToKeychain}
           />
         )}
         <button

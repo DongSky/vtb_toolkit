@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -12,13 +13,30 @@ interface SubtitleSegment {
 }
 
 export default function SubtitlePanel() {
-  const [roomId, setRoomId] = useState("");
-  const [modelPath, setModelPath] = useState("");
-  const [translate, setTranslate] = useState(false);
+  const [roomId, setRoomId] = usePersisted("sub.room", "");
+  const [modelPath, setModelPath] = usePersisted("sub.modelPath", "");
+  const [translate, setTranslate] = usePersisted("sub.translate", false);
   const [apiKey, setApiKey] = useState("");
   const [running, setRunning] = useState(false);
   const [segments, setSegments] = useState<SubtitleSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const [keySaved, setKeySaved] = useState(false);
+  useEffect(() => {
+    Promise.resolve(invoke<boolean>("secret_exists", { name: "llm-api-key" }))
+      .then((v) => setKeySaved(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const saveKeyToKeychain = async () => {
+    if (!apiKey) return;
+    try {
+      await invoke("secret_set", { name: "llm-api-key", value: apiKey });
+      setKeySaved(true);
+    } catch {
+      /* keychain unavailable */
+    }
+  };
+
 
   useEffect(() => {
     const un = listen<SubtitleSegment>("subtitle://segment", (e) =>
@@ -83,9 +101,11 @@ export default function SubtitlePanel() {
         {translate && (
           <input
             data-testid="sub-apikey"
-            placeholder="LLM API Key"
+            type="password"
+            placeholder={keySaved ? "已保存到钥匙串（留空则使用）" : "LLM API Key（自动存入钥匙串）"}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            onBlur={saveKeyToKeychain}
           />
         )}
         {running ? (

@@ -169,9 +169,12 @@ describe("OfflinePanel", () => {
       target: { value: "/models/ggml-small.bin" },
     });
     fireEvent.click(screen.getByTestId("off-start"));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
-    const call = invokeMock.mock.calls[0];
-    expect(call[0]).toBe("offline_process");
+    await waitFor(() =>
+      expect(
+        invokeMock.mock.calls.some((c) => c[0] === "offline_process"),
+      ).toBe(true),
+    );
+    const call = invokeMock.mock.calls.find((c) => c[0] === "offline_process")!;
     expect(call[1].options.input).toBe("/rec/full.flv");
     expect(call[1].options.model_path).toBe("/models/ggml-small.bin");
 

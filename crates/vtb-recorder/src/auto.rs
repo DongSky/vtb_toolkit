@@ -415,10 +415,33 @@ mod tests {
 
         mtx.send(MonitorEvent::WentLive { room_id: 42 }).await.unwrap();
         let started = erx.recv().await.unwrap();
-        assert!(matches!(started, RecorderEvent::RecordingStarted { room_id: 42, .. }));
+        let session_dir = match &started {
+            RecorderEvent::RecordingStarted { room_id: 42, output_dir } => output_dir.clone(),
+            other => panic!("expected start, got {other:?}"),
+        };
 
-        // Let the fake recorder produce some output.
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        // Wait until the fake recorder has produced a non-empty part file
+        // (it appends once per second; a fixed sleep is flaky under
+        // parallel-suite load).
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let has_part = std::fs::read_dir(&session_dir)
+                .map(|rd| {
+                    rd.flatten().any(|e| {
+                        e.path().extension().map(|x| x == "flv").unwrap_or(false)
+                            && e.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            if has_part {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fake recorder never wrote a part file"
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
 
         mtx.send(MonitorEvent::WentOffline { room_id: 42 }).await.unwrap();
         let stopped = erx.recv().await.unwrap();
