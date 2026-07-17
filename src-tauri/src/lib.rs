@@ -46,6 +46,8 @@ pub fn run() {
             commands::stats::stats_export,
             commands::asr_models::asr_models,
             commands::asr_models::asr_model_download,
+            commands::tts::tts_set,
+            commands::tts::tts_status,
             commands::danmaku::danmaku_connect,
             commands::danmaku::danmaku_disconnect,
             commands::danmaku::danmaku_status,

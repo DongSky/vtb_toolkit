@@ -56,6 +56,9 @@ pub struct AutoRecorderConfig {
     /// Stop recording when the output disk's free space drops below this
     /// many bytes (safety net for unattended recording).
     pub min_free_bytes: u64,
+    /// Forward decoded PCM from the recording pull (realtime subtitles
+    /// without a second stream connection).
+    pub pcm_tx: Option<tokio::sync::mpsc::Sender<Vec<f32>>>,
 }
 
 impl AutoRecorderConfig {
@@ -71,6 +74,7 @@ impl AutoRecorderConfig {
             remux_mp4: true,
             health_check: true,
             min_free_bytes: crate::disk::DEFAULT_MIN_FREE,
+            pcm_tx: None,
         }
     }
 }
@@ -243,6 +247,7 @@ impl<R: StreamResolver + 'static> AutoRecorder<R> {
             extension_override: self.config.extension_override.clone(),
             min_free_bytes: self.config.min_free_bytes,
             free_space_fn: None,
+            pcm_tx: self.config.pcm_tx.clone(),
         };
         let (stop_tx, stop_rx) = watch::channel(false);
         let resolver = self.resolver.clone();

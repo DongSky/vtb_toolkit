@@ -34,6 +34,22 @@ impl Default for TranslateConfig {
     }
 }
 
+/// Whether a segment should be translated at all under `config`.
+/// Shared by the streaming pipeline and [`crate::batch::translate_batch`].
+pub fn should_translate(config: &TranslateConfig, seg: &TranscriptSegment) -> bool {
+    if !seg.is_final || seg.text.trim().chars().count() < config.min_chars {
+        return false;
+    }
+    if config.skip_same_lang {
+        if let Some(lang) = &seg.lang {
+            if lang.eq_ignore_ascii_case(&config.target_lang) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub struct TranslatePipeline {
     backend: Arc<dyn LlmBackend>,
     profile: StreamerProfile,
@@ -67,17 +83,7 @@ impl TranslatePipeline {
 
     /// Whether a segment should be translated at all.
     pub fn should_translate(&self, seg: &TranscriptSegment) -> bool {
-        if !seg.is_final || seg.text.trim().chars().count() < self.config.min_chars {
-            return false;
-        }
-        if self.config.skip_same_lang {
-            if let Some(lang) = &seg.lang {
-                if lang.eq_ignore_ascii_case(&self.config.target_lang) {
-                    return false;
-                }
-            }
-        }
-        true
+        should_translate(&self.config, seg)
     }
 
     /// Translate one final segment, updating rolling context.

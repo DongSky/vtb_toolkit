@@ -73,10 +73,43 @@ pub async fn danmaku_connect(
 
     let app2 = app.clone();
     let publisher = state.overlay_publisher.clone();
+    let notifier = std::sync::Arc::new(super::recorder::load_notifier(&app));
+    // TTS: serial speech worker (lazy) + switch handles for the pump.
+    let tts_tx = state
+        .tts_tx
+        .get_or_init(super::tts::spawn_tts_worker)
+        .clone();
+    let tts_enabled = state.tts_enabled.clone();
+    let tts_paid_only = state.tts_paid_only.clone();
     let pump = tokio::spawn(async move {
+        // Realtime highlight detection over the live event stream.
+        let mut detector = vtb_highlight::realtime::RealtimeDetector::new(
+            vtb_highlight::realtime::RealtimeConfig::default(),
+        );
+        let started = tokio::time::Instant::now();
         while let Some(ev) = rx.recv().await {
             let keep_going = match ev {
                 ManagedEvent::Live(live) => {
+                    let offset = started.elapsed().as_millis() as u64;
+                    if let Some(alert) = detector.on_event(offset, &live) {
+                        let _ = app2.emit("highlight://alert", &alert);
+                        super::recorder::push_notify(
+                            &notifier,
+                            vtb_notify::NotifyKind::Highlight,
+                            format!("房间 {room_id} 疑似高能时刻"),
+                            format!(
+                                "{}（弹幕{}条 z={:.1}）",
+                                alert.reason, alert.danmaku_count, alert.z
+                            ),
+                        );
+                    }
+                    // TTS (serial queue; try_send drops when busy).
+                    if tts_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+                        let paid = tts_paid_only.load(std::sync::atomic::Ordering::Relaxed);
+                        if let Some(text) = super::tts::should_speak(&live, paid) {
+                            let _ = tts_tx.try_send(text);
+                        }
+                    }
                     // Mirror to the OBS overlay (no-op when not running).
                     publisher.publish(vtb_overlay::OverlayMessage::Danmaku(live.clone()));
                     app2.emit(EVENT_DANMAKU, &live).is_ok()

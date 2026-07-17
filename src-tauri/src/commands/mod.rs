@@ -10,3 +10,4 @@ pub mod review;
 pub mod rooms;
 pub mod stats;
 pub mod subtitle;
+pub mod tts;

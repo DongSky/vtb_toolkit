@@ -50,6 +50,9 @@ pub struct OfflineOptions {
     /// Multimodal rescoring of highlights (vision model, needs API key).
     #[serde(default)]
     pub multimodal: bool,
+    /// 歌切 mode: cut sustained song segments separately.
+    #[serde(default)]
+    pub song_clips: bool,
 }
 
 fn default_true() -> bool {
@@ -146,6 +149,7 @@ pub async fn offline_process(
         cfg.translate = options.translate;
         cfg.highlights = options.highlights;
         cfg.burn_subtitles = options.burn_subtitles;
+        cfg.song_clips = options.song_clips;
         cfg.target_lang = options.target_lang.clone();
         cfg.danmaku_log = options.danmaku_log.as_ref().map(PathBuf::from);
         cfg.session_start = options

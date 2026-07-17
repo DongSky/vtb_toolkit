@@ -21,6 +21,10 @@ pub struct AppState {
     /// OBS overlay: publisher lives for the whole app; server on demand.
     pub overlay_publisher: vtb_overlay::OverlayPublisher,
     pub overlay: tokio::sync::Mutex<Option<vtb_overlay::OverlayServer>>,
+    /// Danmaku TTS switches + speech queue (Arc so pump tasks can hold them).
+    pub tts_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub tts_paid_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub tts_tx: std::sync::OnceLock<tokio::sync::mpsc::Sender<String>>,
 }
 
 impl Default for AppState {
@@ -34,6 +38,9 @@ impl Default for AppState {
             qr_login: tokio::sync::Mutex::default(),
             overlay_publisher: vtb_overlay::publisher(),
             overlay: tokio::sync::Mutex::default(),
+            tts_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tts_paid_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tts_tx: std::sync::OnceLock::new(),
         }
     }
 }

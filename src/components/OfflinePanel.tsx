@@ -13,6 +13,7 @@ export default function OfflinePanel() {
   const [translate, setTranslate] = usePersisted("off.translate", false);
   const [burnSubs, setBurnSubs] = usePersisted("off.burnSubs", false);
   const [multimodal, setMultimodal] = usePersisted("off.multimodal", false);
+  const [songClips, setSongClips] = usePersisted("off.songClips", false);
   const [apiKey, setApiKey] = useState("");
   const [progress, setProgress] = useState<JobProgressPayload | null>(null);
   const [done, setDone] = useState<JobDonePayload | null>(null);
@@ -66,6 +67,7 @@ export default function OfflinePanel() {
           translate,
           burn_subtitles: burnSubs,
           multimodal,
+          song_clips: songClips,
           llm_api_key: apiKey || undefined,
         },
       });
@@ -130,6 +132,15 @@ export default function OfflinePanel() {
             onChange={(e) => setMultimodal(e.target.checked)}
           />
           多模态 AI 复核高能片段（自动打分与起标题）
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            data-testid="off-songclips"
+            checked={songClips}
+            onChange={(e) => setSongClips(e.target.checked)}
+          />
+          歌切模式（检测歌回中的完整歌曲并单独切出）
         </label>
         {translate && (
           <input

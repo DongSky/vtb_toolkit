@@ -35,6 +35,9 @@ pub struct SupervisorConfig {
     pub min_free_bytes: u64,
     /// Free-space probe override for tests; `None` = real `disk::free_space`.
     pub free_space_fn: Option<FreeSpaceFn>,
+    /// When set, decoded 16 kHz mono PCM from the SAME pull is forwarded
+    /// here (single-stream recording + realtime subtitles).
+    pub pcm_tx: Option<tokio::sync::mpsc::Sender<Vec<f32>>>,
 }
 
 impl std::fmt::Debug for SupervisorConfig {
@@ -50,6 +53,7 @@ impl std::fmt::Debug for SupervisorConfig {
             .field("extension_override", &self.extension_override)
             .field("min_free_bytes", &self.min_free_bytes)
             .field("free_space_fn", &self.free_space_fn.as_ref().map(|_| "<fn>"))
+            .field("pcm_tx", &self.pcm_tx.as_ref().map(|_| "<tx>"))
             .finish()
     }
 }
@@ -67,6 +71,7 @@ impl SupervisorConfig {
             extension_override: None,
             min_free_bytes: crate::disk::DEFAULT_MIN_FREE,
             free_space_fn: None,
+            pcm_tx: None,
         }
     }
 }
@@ -133,7 +138,7 @@ pub async fn supervise_recording<R: StreamResolver>(
 
         let stem = format!("{}-p{:02}", config.stem_base, part);
         let opts = build_opts(config, &stream, &stem);
-        let child = match recorder.spawn(&opts) {
+        let mut child = match recorder.spawn(&opts) {
             Ok(c) => c,
             Err(e) => {
                 return SupervisorEnd::GaveUp {
@@ -142,6 +147,11 @@ pub async fn supervise_recording<R: StreamResolver>(
                 }
             }
         };
+        // Forward tee'd PCM to the subtitle pipeline (per part; the reader
+        // ends when this ffmpeg exits).
+        if let (Some(tx), Some(stdout)) = (config.pcm_tx.clone(), child.stdout.take()) {
+            tokio::spawn(pump_pcm(stdout, tx));
+        }
         if let Some(n) = &notes {
             let _ = n.send(SupervisorNote::PartStarted { part }).await;
         }
@@ -181,6 +191,7 @@ pub async fn supervise_recording<R: StreamResolver>(
 
 fn build_opts(config: &SupervisorConfig, stream: &ResolvedStream, stem: &str) -> RecordOptions {
     let mut opts = RecordOptions::new(stream.url.clone(), &config.output_dir, stem);
+    opts.tee_audio_pcm = config.pcm_tx.is_some();
     opts.extension = config
         .extension_override
         .clone()
@@ -240,6 +251,29 @@ async fn run_with_watchdog(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Read s16le from ffmpeg stdout, convert to f32 chunks (~0.5 s), forward.
+async fn pump_pcm(
+    mut stdout: tokio::process::ChildStdout,
+    tx: tokio::sync::mpsc::Sender<Vec<f32>>,
+) {
+    use tokio::io::AsyncReadExt;
+    let mut buf = vec![0u8; 16000]; // 0.5 s of 16 kHz mono s16le
+    loop {
+        match stdout.read_exact(&mut buf).await {
+            Ok(_) => {
+                let pcm: Vec<f32> = buf
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32767.0)
+                    .collect();
+                if tx.send(pcm).await.is_err() {
+                    break;
+                }
+            }
+            Err(_) => break, // part ended
         }
     }
 }
@@ -446,6 +480,50 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(4)).await;
         let size_later = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
         assert_eq!(size_after_end, size_later, "ffmpeg must be stopped");
+    }
+
+    /// Fake ffmpeg that writes the file AND streams bytes to stdout,
+    /// mimicking tee_audio_pcm mode.
+    fn stdout_recorder(dir: &Path) -> FfmpegRecorder {
+        let script = dir.join(format!("fake-stdout-{}.sh", std::process::id()));
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ntrap 'exit 0' INT TERM\nout=$(eval echo \\${$#})\nwhile true; do\n  echo data >> \"$out\"\n  head -c 16000 /dev/zero\n  sleep 1\ndone\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        FfmpegRecorder::new(script)
+    }
+
+    #[tokio::test]
+    async fn pcm_tee_forwards_audio_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = CountingResolver { calls: Arc::new(AtomicU32::new(0)), fail: false };
+        let recorder = stdout_recorder(dir.path());
+        let (pcm_tx, mut pcm_rx) = tokio::sync::mpsc::channel(16);
+        let mut cfg = SupervisorConfig::new(1, dir.path(), "pcm");
+        cfg.pcm_tx = Some(pcm_tx);
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let sup = tokio::spawn({
+            let cfg = cfg.clone();
+            async move { supervise_recording(&resolver, &recorder, &cfg, stop_rx, None).await }
+        });
+
+        // Expect at least one 0.5s PCM chunk (8000 samples of silence).
+        let chunk = tokio::time::timeout(Duration::from_secs(20), pcm_rx.recv())
+            .await
+            .expect("pcm chunk timely")
+            .expect("channel open");
+        assert_eq!(chunk.len(), 8000);
+        assert!(chunk.iter().all(|s| *s == 0.0), "silence expected from /dev/zero");
+
+        stop_tx.send(true).unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(15), sup).await.unwrap().unwrap();
+        assert_eq!(end, SupervisorEnd::Stopped);
     }
 
     #[tokio::test]

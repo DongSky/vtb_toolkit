@@ -44,6 +44,9 @@ pub struct RecordOptions {
     pub headers: Vec<(String, String)>,
     /// User agent for the input request.
     pub user_agent: Option<String>,
+    /// Also emit 16 kHz mono s16le PCM on stdout (single-pull recording +
+    /// realtime subtitles from the same stream).
+    pub tee_audio_pcm: bool,
 }
 
 impl RecordOptions {
@@ -60,6 +63,7 @@ impl RecordOptions {
             segment: SegmentPolicy::Single,
             headers: Vec::new(),
             user_agent: None,
+            tee_audio_pcm: false,
         }
     }
 
@@ -156,6 +160,13 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
     }
 
     args.push(opts.output_template().into());
+
+    // Secondary output: decoded audio for live ASR, same pull.
+    if opts.tee_audio_pcm {
+        for a in ["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"] {
+            args.push(a.into());
+        }
+    }
     args
 }
 
@@ -204,12 +215,14 @@ impl FfmpegRecorder {
         std::fs::create_dir_all(&opts.output_dir)?;
         let args = build_args(opts);
         tracing::info!("spawning ffmpeg: {:?} {:?}", self.binary, args);
-        let child = tokio::process::Command::new(&self.binary)
-            .args(&args)
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.args(&args)
             .stdin(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|_| RecorderError::FfmpegMissing)?;
+            .kill_on_drop(true);
+        if opts.tee_audio_pcm {
+            cmd.stdout(std::process::Stdio::piped());
+        }
+        let child = cmd.spawn().map_err(|_| RecorderError::FfmpegMissing)?;
         Ok(child)
     }
 }
@@ -356,6 +369,29 @@ mod tests {
             .collect();
         let ui = s.iter().position(|x| x == "-user_agent").unwrap();
         assert_eq!(s[ui + 1], "UA/1.0");
+    }
+
+    #[test]
+    fn tee_audio_adds_second_pcm_output() {
+        let mut o = opts();
+        o.tee_audio_pcm = true;
+        let s: Vec<String> = build_args(&o)
+            .iter()
+            .map(|a| a.to_string_lossy().into())
+            .collect();
+        // File output comes first, then the PCM pipe output.
+        let file_pos = s.iter().position(|x| x.ends_with("room1.flv")).unwrap();
+        let pipe_pos = s.iter().position(|x| x == "pipe:1").unwrap();
+        assert!(file_pos < pipe_pos);
+        let vn = s.iter().position(|x| x == "-vn").unwrap();
+        assert!(vn > file_pos && vn < pipe_pos);
+        assert!(s.contains(&"s16le".to_string()));
+        // Without the flag there is no pipe output.
+        let s2: Vec<String> = build_args(&opts())
+            .iter()
+            .map(|a| a.to_string_lossy().into())
+            .collect();
+        assert!(!s2.contains(&"pipe:1".to_string()));
     }
 
     #[test]

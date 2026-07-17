@@ -16,7 +16,9 @@ use vtb_asr::streaming::{transcribe_buffer, StreamingConfig};
 use vtb_common::{Highlight, TranscriptSegment, TranslatedSegment};
 use vtb_highlight::fusion::{detect_highlights, FusionConfig, SignalSet};
 use vtb_highlight::signals::{danmaku_density, gift_value, keyword_score, audio_energy_scores};
-use vtb_translate::{LlmBackend, StreamerProfile, TranslateConfig, TranslatePipeline};
+use vtb_translate::{
+    translate_batch, BatchConfig, LlmBackend, StreamerProfile, TranslateConfig,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +63,8 @@ pub struct JobConfig {
     pub burn_subtitles: bool,
     /// Highlight analysis window size in ms.
     pub window_ms: u64,
+    /// 歌切: detect sustained music/song segments and cut them separately.
+    pub song_clips: bool,
 }
 
 impl JobConfig {
@@ -78,6 +82,7 @@ impl JobConfig {
             streaming: StreamingConfig::default(),
             burn_subtitles: false,
             window_ms: 10_000,
+            song_clips: false,
         }
     }
 }
@@ -96,6 +101,14 @@ pub struct JobOutput {
     /// Per-window signal curves (高能进度条 data).
     #[serde(default)]
     pub signals_json: Option<PathBuf>,
+    /// 歌切 detected song segments.
+    #[serde(default)]
+    pub songs: Vec<vtb_highlight::music::MusicSegment>,
+    #[serde(default)]
+    pub song_files: Vec<PathBuf>,
+    /// LLM usage of the translation stage, when translation ran.
+    #[serde(default)]
+    pub translate_usage: Option<vtb_translate::UsageStats>,
 }
 
 pub struct OfflineJob {
@@ -193,34 +206,44 @@ impl OfflineJob {
         let transcript_json = self.config.output_dir.join("transcript.json");
         std::fs::write(&transcript_json, serde_json::to_string_pretty(&out.transcript)?)?;
 
-        // 3. Translate (optional).
+        // 3. Translate (optional): bounded-concurrency batch with retries.
         if self.config.translate {
             let backend = self.translator.clone().ok_or_else(|| {
                 PipelineError::Config("translate=true but no LLM backend set".into())
             })?;
-            let mut pipeline = TranslatePipeline::new(
-                backend,
-                self.profile.clone(),
-                TranslateConfig {
-                    target_lang: self.config.target_lang.clone(),
-                    ..Default::default()
-                },
-            );
-            let n = out.transcript.len().max(1);
-            for (i, seg) in out.transcript.clone().iter().enumerate() {
-                self.report(
-                    Stage::Translate,
-                    Some(i as f64 / n as f64),
-                    format!("翻译 {}/{}", i + 1, n),
-                )
-                .await;
-                if pipeline.should_translate(seg) {
-                    match pipeline.translate_segment(seg).await {
-                        Ok(t) => out.translations.push(t),
-                        Err(e) => tracing::warn!("translate segment failed: {e}"),
+            let cfg = TranslateConfig {
+                target_lang: self.config.target_lang.clone(),
+                ..Default::default()
+            };
+            self.report(Stage::Translate, Some(0.0), "翻译").await;
+            // Forward batch (done, total) progress into the job channel.
+            let (batch_tx, mut batch_rx) = mpsc::channel::<(usize, usize)>(32);
+            let progress = self.progress.clone();
+            let forward = tokio::spawn(async move {
+                while let Some((done, total)) = batch_rx.recv().await {
+                    if let Some(tx) = &progress {
+                        let _ = tx
+                            .send(JobProgress {
+                                stage: Stage::Translate,
+                                fraction: Some(done as f64 / total.max(1) as f64),
+                                message: format!("翻译 {done}/{total}"),
+                            })
+                            .await;
                     }
                 }
-            }
+            });
+            let (translations, usage) = translate_batch(
+                backend,
+                &self.profile,
+                &cfg,
+                &BatchConfig::default(),
+                &out.transcript,
+                Some(batch_tx),
+            )
+            .await;
+            let _ = forward.await;
+            out.translations = translations;
+            out.translate_usage = Some(usage);
         }
 
         // 4. Subtitles.
@@ -346,6 +369,35 @@ impl OfflineJob {
                 {
                     Ok(path) => out.clip_files.push(path),
                     Err(e) => tracing::warn!("clip cut failed: {e}"),
+                }
+            }
+        }
+
+        // 歌切: sustained-music detection + per-song clips.
+        if self.config.song_clips {
+            self.report(Stage::CutClips, None, "歌切检测").await;
+            let rms = rms_series(&pcm, 500);
+            out.songs = vtb_highlight::music::detect_music_segments(
+                &rms,
+                &vtb_highlight::music::MusicConfig::default(),
+            );
+            let song_highlights = vtb_highlight::music::song_clip_highlights(&out.songs);
+            let song_opts = vtb_highlight::clip::ClipOptions {
+                input: self.config.input.clone(),
+                output_dir: self.config.output_dir.join("songs"),
+                reencode: false,
+                burn_subtitles: None,
+            };
+            for (i, h) in song_highlights.iter().enumerate() {
+                self.report(
+                    Stage::CutClips,
+                    None,
+                    format!("歌切 {}/{}", i + 1, song_highlights.len()),
+                )
+                .await;
+                match vtb_highlight::clip::cut_clip(&self.config.ffmpeg, &song_opts, h).await {
+                    Ok(p) => out.song_files.push(p),
+                    Err(e) => tracing::warn!("song cut failed: {e}"),
                 }
             }
         }

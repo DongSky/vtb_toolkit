@@ -10,8 +10,10 @@ pub mod glossary;
 pub mod prompt;
 pub mod backend;
 pub mod pipeline;
+pub mod batch;
 
 pub use backend::{LlmBackend, OpenAiCompatBackend, AnthropicBackend};
+pub use batch::{translate_batch, BatchConfig, UsageStats};
 pub use error::TranslateError;
 pub use glossary::{Glossary, GlossaryEntry, ReferencePair, StreamerProfile};
 pub use pipeline::{TranslatePipeline, TranslateConfig};

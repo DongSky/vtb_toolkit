@@ -33,6 +33,12 @@ pub struct RecorderOptions {
     /// poll seconds (default 15)
     #[serde(default)]
     pub poll_secs: Option<u64>,
+    /// Realtime subtitles from the SAME pull (no second connection).
+    #[serde(default)]
+    pub live_subtitle: bool,
+    /// whisper model path (required when live_subtitle).
+    #[serde(default)]
+    pub model_path: Option<String>,
 }
 
 struct ApiStatusSource {
@@ -50,7 +56,7 @@ impl StatusSource for ApiStatusSource {
 }
 
 /// Build the notifier fan-out from the "notify" object in settings.json.
-fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
+pub(crate) fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
     let cfg = super::config::read_settings(app);
     match serde_json::from_value::<vtb_notify::NotifyConfig>(cfg["notify"].clone()) {
         Ok(c) => c.build(),
@@ -59,7 +65,7 @@ fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
 }
 
 /// Fire-and-forget notification (never blocks the event pump).
-fn push_notify(
+pub(crate) fn push_notify(
     notifier: &std::sync::Arc<vtb_notify::MultiNotifier>,
     kind: vtb_notify::NotifyKind,
     title: String,
@@ -206,10 +212,64 @@ pub async fn recorder_start(
             api: StreamApi::new(status_client),
         },
     );
+    // Single-pull realtime subtitles: recorder tees decoded PCM to an ASR
+    // task; no second stream connection.
+    let pcm_tx = if options.live_subtitle {
+        #[cfg(not(feature = "whisper"))]
+        {
+            return Err("built without whisper support".into());
+        }
+        #[cfg(feature = "whisper")]
+        {
+            let model = options
+                .model_path
+                .clone()
+                .filter(|m| !m.is_empty())
+                .ok_or("实时字幕需要 whisper 模型路径")?;
+            let engine = std::sync::Arc::new(
+                vtb_asr::engine::WhisperEngine::new(std::path::Path::new(&model), None)
+                    .map_err(|e| e.to_string())?,
+            );
+            let (tx, mut rx) = mpsc::channel::<Vec<f32>>(64);
+            let app_sub = app.clone();
+            let publisher = state.overlay_publisher.clone();
+            tokio::spawn(async move {
+                let mut asr = vtb_asr::streaming::StreamingAsr::new(
+                    engine,
+                    vtb_asr::streaming::StreamingConfig::default(),
+                );
+                while let Some(chunk) = rx.recv().await {
+                    for seg in asr.feed(&chunk).await {
+                        publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                            text: seg.text.clone(),
+                            translated: None,
+                            lang: seg.lang.clone(),
+                        });
+                        let _ = app_sub.emit(
+                            super::subtitle::EVENT_SUBTITLE,
+                            serde_json::json!({
+                                "room_id": room_id,
+                                "start_ms": seg.start_ms,
+                                "end_ms": seg.end_ms,
+                                "text": seg.text,
+                                "lang": seg.lang,
+                                "translated": null,
+                            }),
+                        );
+                    }
+                }
+            });
+            Some(tx)
+        }
+    } else {
+        None
+    };
+
     let auto = AutoRecorder::new(
         {
             let mut cfg = AutoRecorderConfig::new(room_id, PathBuf::from(&options.output_dir));
             cfg.segment = segment;
+            cfg.pcm_tx = pcm_tx;
             cfg
         },
         BiliResolver::new(StreamApi::new(stream_client), qn::ORIGINAL),
