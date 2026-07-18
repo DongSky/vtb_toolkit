@@ -9,6 +9,7 @@ pub mod session;
 pub mod auto;
 pub mod check;
 pub mod disk;
+pub mod flv;
 pub mod platform;
 pub mod supervisor;
 

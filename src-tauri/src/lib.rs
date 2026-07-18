@@ -72,6 +72,7 @@ pub fn run() {
             commands::recorder::recorder_start,
             commands::recorder::recorder_stop,
             commands::recorder::recorder_status,
+            commands::recorder::flv_repair,
             commands::pipeline::offline_process,
             commands::pipeline::offline_cancel,
             commands::subtitle::live_subtitle_start,

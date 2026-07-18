@@ -322,6 +322,37 @@ pub async fn recorder_start(
                     if let Some(h) = danmaku_log.take() {
                         h.stop().await;
                     }
+                    // FLV tag-level timestamp repair (对标录播姬): fix
+                    // server-splice jumps so cutting/subtitles stay aligned.
+                    // Clean files are left untouched.
+                    for seg in &metadata.segments {
+                        let path = seg.path.clone();
+                        if path.extension().and_then(|e| e.to_str()) != Some("flv") {
+                            continue;
+                        }
+                        let done = tokio::task::spawn_blocking(move || {
+                            let r = vtb_recorder::flv::repair_file(
+                                &path,
+                                &vtb_recorder::flv::RepairConfig::default(),
+                            );
+                            (path, r)
+                        })
+                        .await;
+                        if let Ok((path, result)) = done {
+                            match result {
+                                Ok(s) if s.discontinuities > 0 => tracing::info!(
+                                    "FLV 修复 {}: {} 处时间戳跳变已修复 (原文件保留为 .orig)",
+                                    path.display(),
+                                    s.discontinuities
+                                ),
+                                Ok(_) => {}
+                                Err(e) => tracing::warn!(
+                                    "FLV 修复失败 {}: {e}",
+                                    path.display()
+                                ),
+                            }
+                        }
+                    }
                     if let Some(s) = super::hooks::hook_for(&hook_settings, "recording_stopped") {
                         super::hooks::run_hook(s, super::hooks::HookEvent {
                             event: "recording_stopped".into(),
@@ -396,4 +427,33 @@ pub async fn recorder_status(state: State<'_, AppState>) -> Result<Vec<u64>, Str
         .filter(|(_, h)| !h.monitor.is_finished())
         .map(|(id, _)| *id)
         .collect())
+}
+
+#[derive(serde::Serialize)]
+pub struct FlvRepairResult {
+    pub tags: u64,
+    pub discontinuities: u64,
+    pub duration_ms: i64,
+    pub truncated: bool,
+    pub replaced: bool,
+}
+
+/// 工具箱: repair timestamps of an existing FLV recording. Clean files
+/// are left untouched; repaired files keep the original as `.orig`.
+#[tauri::command]
+pub async fn flv_repair(path: String) -> Result<FlvRepairResult, String> {
+    let p = std::path::PathBuf::from(path);
+    let stats = tokio::task::spawn_blocking(move || {
+        vtb_recorder::flv::repair_file(&p, &vtb_recorder::flv::RepairConfig::default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(FlvRepairResult {
+        tags: stats.tags,
+        discontinuities: stats.discontinuities,
+        duration_ms: stats.last_timestamp_ms,
+        truncated: stats.truncated,
+        replaced: stats.discontinuities > 0,
+    })
 }
