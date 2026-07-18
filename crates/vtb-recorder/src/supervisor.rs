@@ -113,25 +113,42 @@ pub async fn supervise_recording<R: StreamResolver>(
 ) -> SupervisorEnd {
     let mut part: u32 = 0;
     let mut rapid_failures: u32 = 0;
+    // Backup CDN lines (备线) from the last resolve; consumed before a full
+    // re-resolve so a single dead host doesn't force a fresh playurl call.
+    let mut backup_lines: std::collections::VecDeque<String> = Default::default();
+    let mut last_resolved: Option<ResolvedStream> = None;
     loop {
         if *stop.borrow() {
             return SupervisorEnd::Stopped;
         }
         let started = tokio::time::Instant::now();
-        // Fresh URL every (re)start — stream URLs expire quickly.
-        let stream = match resolver.resolve(config.room_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                rapid_failures += 1;
-                if rapid_failures >= config.max_rapid_failures {
-                    return SupervisorEnd::GaveUp {
-                        failures: rapid_failures,
-                        last_error: e.to_string(),
-                    };
+        // Prefer an unused backup line; otherwise resolve fresh (stream URLs
+        // expire quickly, so re-resolving also refreshes the primary).
+        let stream = if let Some(url) = backup_lines.pop_front() {
+            tracing::info!("切换备线 (剩余 {} 条)", backup_lines.len());
+            ResolvedStream {
+                url,
+                ..last_stream_shell(&last_resolved)
+            }
+        } else {
+            match resolver.resolve(config.room_id).await {
+                Ok(s) => {
+                    backup_lines = s.backup_urls.iter().cloned().collect();
+                    last_resolved = Some(s.clone());
+                    s
                 }
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(3)) => continue,
-                    _ = stop.changed() => continue,
+                Err(e) => {
+                    rapid_failures += 1;
+                    if rapid_failures >= config.max_rapid_failures {
+                        return SupervisorEnd::GaveUp {
+                            failures: rapid_failures,
+                            last_error: e.to_string(),
+                        };
+                    }
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(3)) => continue,
+                        _ = stop.changed() => continue,
+                    }
                 }
             }
         };
@@ -181,11 +198,38 @@ pub async fn supervise_recording<R: StreamResolver>(
                         };
                     }
                 } else {
+                    // A healthy run means the primary line was fine; its
+                    // backups have since expired, so force a fresh resolve
+                    // for the next part rather than trying stale hosts.
                     rapid_failures = 0;
+                    backup_lines.clear();
                 }
                 part += 1;
             }
         }
+    }
+}
+
+/// Headers/UA/extension of the last resolve, with an empty url and no
+/// backups — the caller fills in the backup url. Falls back to empty
+/// metadata if nothing was resolved yet (shouldn't happen: backups only
+/// exist after a successful resolve).
+fn last_stream_shell(last: &Option<ResolvedStream>) -> ResolvedStream {
+    match last {
+        Some(s) => ResolvedStream {
+            url: String::new(),
+            headers: s.headers.clone(),
+            user_agent: s.user_agent.clone(),
+            extension: s.extension.clone(),
+            backup_urls: vec![],
+        },
+        None => ResolvedStream {
+            url: String::new(),
+            headers: vec![],
+            user_agent: None,
+            extension: "flv".into(),
+            backup_urls: vec![],
+        },
     }
 }
 
@@ -338,8 +382,60 @@ mod tests {
                 headers: vec![],
                 user_agent: None,
                 extension: "flv".into(),
+                backup_urls: vec![],
             })
         }
+    }
+
+    /// Resolver that hands out backup CDN lines (备线) with each resolve.
+    struct BackupResolver {
+        calls: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl StreamResolver for BackupResolver {
+        async fn resolve(&self, _room_id: u64) -> Result<ResolvedStream> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ResolvedStream {
+                url: "primary".into(),
+                headers: vec![("Referer".into(), "https://x/".into())],
+                user_agent: None,
+                extension: "flv".into(),
+                backup_urls: vec!["backup-1".into(), "backup-2".into()],
+            })
+        }
+    }
+
+    /// Fake "ffmpeg" that exits immediately (simulating a dead CDN line).
+    fn failing_recorder(dir: &Path) -> FfmpegRecorder {
+        let script = dir.join("fake-fail.sh");
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        FfmpegRecorder::new(script)
+    }
+
+    #[tokio::test]
+    async fn backup_lines_consumed_before_re_resolving() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let resolver = BackupResolver { calls: calls.clone() };
+        let recorder = failing_recorder(dir.path());
+
+        let mut cfg = SupervisorConfig::new(1, dir.path(), "sess");
+        cfg.min_healthy = Duration::from_secs(60); // every run is "rapid"
+        cfg.max_rapid_failures = 4;
+
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let end = supervise_recording(&resolver, &recorder, &cfg, stop_rx, None).await;
+
+        assert!(matches!(end, SupervisorEnd::GaveUp { failures: 4, .. }), "{end:?}");
+        // Runs: resolve#1(primary) → backup-1 → backup-2 → resolve#2 = 4
+        // failures with only TWO resolver calls (backups consumed first).
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     /// Fake "ffmpeg" that appends to the output file for `write_secs`

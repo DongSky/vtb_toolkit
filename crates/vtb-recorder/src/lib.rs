@@ -10,6 +10,7 @@ pub mod auto;
 pub mod check;
 pub mod disk;
 pub mod flv;
+pub mod retention;
 pub mod platform;
 pub mod supervisor;
 

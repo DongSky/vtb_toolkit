@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { usePersisted } from "../hooks/usePersisted";
+import WordCloud from "./WordCloud";
 
 interface Curve {
   window_ms: number;
@@ -48,7 +49,9 @@ export default function ReviewPanel() {
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const dragStart = useRef<number | null>(null);
 
   const load = async () => {
@@ -163,6 +166,28 @@ export default function ReviewPanel() {
     }
   };
 
+  // Built-in preview player: play a recording/clip in-app via the asset
+  // protocol (no external player round-trip).
+  const openPreview = (path: string) => {
+    setPreview((prev) => {
+      const src = convertFileSrc(path);
+      return prev === src ? null : src;
+    });
+  };
+
+  // Clicking the timeline while the main video is open seeks the player.
+  useEffect(() => {
+    if (
+      cursor != null &&
+      videoRef.current &&
+      data?.video &&
+      preview === convertFileSrc(data.video)
+    ) {
+      videoRef.current.currentTime = cursor / 1000;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor]);
+
   return (
     <div className="panel" data-testid="review-panel">
       <h2>录播复盘（高能进度条）</h2>
@@ -224,6 +249,27 @@ export default function ReviewPanel() {
             )}
           </div>
           {exportMsg && <div data-testid="review-export-msg">{exportMsg}</div>}
+          {data.video && (
+            <div className="form-row">
+              <button
+                data-testid="review-preview-video"
+                onClick={() => openPreview(data.video!)}
+              >
+                {preview === convertFileSrc(data.video)
+                  ? "关闭预览"
+                  : "预览录播"}
+              </button>
+            </div>
+          )}
+          {preview && (
+            <video
+              ref={videoRef}
+              data-testid="review-player"
+              src={preview}
+              controls
+              style={{ width: "100%", borderRadius: 6, background: "#000" }}
+            />
+          )}
           <h3>高能片段（{data.highlights.length}）</h3>
           <ul data-testid="review-highlights">
             {data.highlights.map((h, i) => (
@@ -244,6 +290,28 @@ export default function ReviewPanel() {
                 导出报告 (Markdown + SC CSV)
               </button>
               {reportMsg && <p style={{ fontSize: 12 }}>{reportMsg}</p>}
+              {Array.isArray(report.word_freq) &&
+                (report.word_freq as [string, number][]).length > 0 && (
+                  <>
+                    <h4>弹幕热词</h4>
+                    <WordCloud words={report.word_freq as [string, number][]} />
+                  </>
+                )}
+              {Array.isArray(report.top_chatters) &&
+                (report.top_chatters as [string, number][]).length > 0 && (
+                  <>
+                    <h4>发言榜</h4>
+                    <ol data-testid="review-top-chatters" className="top-chatters">
+                      {(report.top_chatters as [string, number][])
+                        .slice(0, 10)
+                        .map(([name, n]) => (
+                          <li key={name}>
+                            {name} <span className="hint">{n}</span>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                )}
             </div>
           )}
           {uploadMsg && <div data-testid="upload-msg">{uploadMsg}</div>}
@@ -252,6 +320,13 @@ export default function ReviewPanel() {
             {data.clips.map((c) => (
               <li key={c} style={{ fontSize: 12 }}>
                 {c}{" "}
+                <button
+                  data-testid="clip-preview"
+                  style={{ fontSize: 11, padding: "1px 6px" }}
+                  onClick={() => openPreview(c)}
+                >
+                  预览
+                </button>{" "}
                 <button
                   data-testid={`clip-upload`}
                   style={{ fontSize: 11, padding: "1px 6px" }}

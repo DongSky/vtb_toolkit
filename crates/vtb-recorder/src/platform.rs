@@ -170,6 +170,7 @@ impl Platform for YtDlpPlatform {
             headers: vec![],
             user_agent: None,
             extension: extension.into(),
+            backup_urls: vec![],
         })
     }
 }

@@ -27,6 +27,9 @@ pub struct ResolvedStream {
     pub headers: Vec<(String, String)>,
     pub user_agent: Option<String>,
     pub extension: String,
+    /// Backup line URLs (备线) for the same stream on other CDN hosts; the
+    /// supervisor tries these before re-resolving on a stall/failure.
+    pub backup_urls: Vec<String>,
 }
 
 /// Events the orchestrator emits for UI display.
@@ -352,6 +355,7 @@ impl StreamResolver for BiliResolver {
                     .into(),
             ),
             extension: extension.into(),
+            backup_urls: best.backup_urls.clone(),
         })
     }
 }
@@ -374,6 +378,7 @@ mod tests {
                 headers: vec![],
                 user_agent: None,
                 extension: "flv".into(),
+                backup_urls: vec![],
             })
         }
     }

@@ -17,7 +17,7 @@ whisper = ["vtb-asr/whisper", "vtb-pipeline/whisper"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde.workspace = true

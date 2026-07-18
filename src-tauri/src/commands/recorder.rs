@@ -64,6 +64,35 @@ pub(crate) fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
     }
 }
 
+/// Build the rolling-cleanup policy from the "retention" object in
+/// settings.json. Absent/empty → no-op (nothing is ever deleted).
+///
+/// ```json
+/// "retention": { "max_age_days": 30, "max_sessions_per_room": 10,
+///                 "target_free_gib": 20 }
+/// ```
+pub(crate) fn load_retention(settings: &serde_json::Value) -> vtb_recorder::retention::RetentionPolicy {
+    use std::time::Duration;
+    let r = &settings["retention"];
+    let max_age = r["max_age_days"]
+        .as_u64()
+        .filter(|d| *d > 0)
+        .map(|d| Duration::from_secs(d * 86400));
+    let max_sessions_per_room = r["max_sessions_per_room"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .map(|n| n as usize);
+    let target_free_bytes = r["target_free_gib"]
+        .as_f64()
+        .filter(|g| *g > 0.0)
+        .map(|g| (g * 1024.0 * 1024.0 * 1024.0) as u64);
+    vtb_recorder::retention::RetentionPolicy {
+        max_age,
+        max_sessions_per_room,
+        target_free_bytes,
+    }
+}
+
 /// Fire-and-forget notification (never blocks the event pump).
 pub(crate) fn push_notify(
     notifier: &std::sync::Arc<vtb_notify::MultiNotifier>,
@@ -292,11 +321,35 @@ pub async fn recorder_start(
     let notifier = std::sync::Arc::new(load_notifier(&app));
     let stats_db = stats_db_path(&app);
     let hook_settings = super::config::read_settings(&app);
+    let retention = load_retention(&hook_settings);
+    let output_root = PathBuf::from(&options.output_dir);
     tokio::spawn(async move {
         let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
             let payload = match ev {
                 RecorderEvent::RecordingStarted { room_id, output_dir } => {
+                    // Rolling cleanup of old recordings (对标 blrec): runs
+                    // when a new session starts, never touches the active one.
+                    if !retention.is_noop() {
+                        let root = output_root.clone();
+                        let policy = retention.clone();
+                        let active = output_dir.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let report = vtb_recorder::retention::run_cleanup(
+                                &root,
+                                &policy,
+                                Some(&active),
+                                vtb_recorder::disk::free_space,
+                            );
+                            if !report.deleted.is_empty() {
+                                tracing::info!(
+                                    "滚动清理: 删除 {} 个旧录播，释放 {:.1} MB",
+                                    report.deleted.len(),
+                                    report.freed_bytes as f64 / 1_048_576.0
+                                );
+                            }
+                        });
+                    }
                     danmaku_log =
                         start_danmaku_log(room_id, &output_dir, creds.clone(), stats_db.clone());
                     push_notify(

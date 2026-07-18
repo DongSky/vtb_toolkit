@@ -361,3 +361,28 @@ button.danger {
   padding: 3px 8px;
   text-align: left;
 }
+
+.word-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  line-height: 1.4;
+}
+
+.word-cloud-item {
+  cursor: default;
+  transition: opacity 0.15s;
+}
+
+.top-chatters {
+  margin: 4px 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.top-chatters .hint {
+  opacity: 0.55;
+  font-size: 0.85em;
+}

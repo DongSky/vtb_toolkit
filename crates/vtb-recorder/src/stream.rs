@@ -124,6 +124,9 @@ pub struct PlayStream {
     pub codec: String,
     pub qn: u32,
     pub accept_qn: Vec<u32>,
+    /// Backup URLs for the SAME stream on other CDN hosts (备线), tried
+    /// on failure before re-resolving. Empty when only one host is offered.
+    pub backup_urls: Vec<String>,
 }
 
 /// Parse `getRoomPlayInfo` and return every resolvable stream URL.
@@ -143,14 +146,21 @@ pub fn parse_play_info(body: &str) -> Result<Vec<PlayStream>> {
     for stream in &info.playurl.stream {
         for format in &stream.format {
             for codec in &format.codec {
-                if let Some(u) = codec.url_info.first() {
+                // Every host offered for this codec builds a full URL; the
+                // first is primary, the rest are backup lines (备线).
+                let mut urls = codec
+                    .url_info
+                    .iter()
+                    .map(|u| format!("{}{}{}", u.host, codec.base_url, u.extra));
+                if let Some(url) = urls.next() {
                     out.push(PlayStream {
-                        url: format!("{}{}{}", u.host, codec.base_url, u.extra),
+                        url,
                         protocol: stream.protocol_name.clone(),
                         format: format.format_name.clone(),
                         codec: codec.codec_name.clone(),
                         qn: codec.current_qn,
                         accept_qn: codec.accept_qn.clone(),
+                        backup_urls: urls.collect(),
                     });
                 }
             }
@@ -261,6 +271,32 @@ mod tests {
     }
 
     #[test]
+    fn play_info_collects_backup_lines() {
+        let body = r#"{"code":0,"data":{"playurl_info":{"playurl":{"stream":[
+            {"protocol_name":"http_stream","format":[
+                {"format_name":"flv","codec":[
+                    {"codec_name":"avc","base_url":"/live/123.flv?x=1",
+                     "current_qn":10000,"accept_qn":[10000],
+                     "url_info":[
+                        {"host":"https://cn-a.bilivideo.com","extra":"&t=1"},
+                        {"host":"https://cn-b.bilivideo.com","extra":"&t=2"},
+                        {"host":"https://cn-c.bilivideo.com","extra":"&t=3"}
+                     ]}
+                ]}
+            ]}
+        ]}}}}"#;
+        let streams = parse_play_info(body).unwrap();
+        assert_eq!(streams[0].url, "https://cn-a.bilivideo.com/live/123.flv?x=1&t=1");
+        assert_eq!(
+            streams[0].backup_urls,
+            vec![
+                "https://cn-b.bilivideo.com/live/123.flv?x=1&t=2",
+                "https://cn-c.bilivideo.com/live/123.flv?x=1&t=3"
+            ]
+        );
+    }
+
+    #[test]
     fn play_info_no_stream_errors() {
         let body = r#"{"code":0,"data":{"playurl_info":{"playurl":{"stream":[]}}}}"#;
         assert!(matches!(
@@ -279,6 +315,7 @@ mod tests {
                 codec: "avc".into(),
                 qn: 10000,
                 accept_qn: vec![],
+                backup_urls: vec![],
             },
             PlayStream {
                 url: "flv-mid".into(),
@@ -287,6 +324,7 @@ mod tests {
                 codec: "avc".into(),
                 qn: 400,
                 accept_qn: vec![],
+                backup_urls: vec![],
             },
             PlayStream {
                 url: "flv-high".into(),
@@ -295,6 +333,7 @@ mod tests {
                 codec: "avc".into(),
                 qn: 10000,
                 accept_qn: vec![],
+                backup_urls: vec![],
             },
         ];
         assert_eq!(pick_best(&streams).unwrap().url, "flv-high");
@@ -313,6 +352,7 @@ mod tests {
             codec: codec.into(),
             qn: 250,
             accept_qn: vec![],
+            backup_urls: vec![],
         };
         // hevc after avc, same qn — the exact live layout that broke.
         let streams = vec![mk("avc", "flv-avc"), mk("hevc", "flv-hevc")];

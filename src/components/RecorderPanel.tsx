@@ -10,6 +10,15 @@ export default function RecorderPanel() {
   const [outputDir, setOutputDir] = usePersisted("rec.outputDir", "");
   const [segmentMode, setSegmentMode] = usePersisted("rec.segmentMode", "duration");
   const [segmentValue, setSegmentValue] = usePersisted("rec.segmentValue", "3600");
+  const [retention, setRetention] = usePersisted<{
+    max_age_days: number;
+    max_sessions_per_room: number;
+    target_free_gib: number;
+  }>("retention", {
+    max_age_days: 0,
+    max_sessions_per_room: 0,
+    target_free_gib: 0,
+  });
   const [active, setActive] = useState<number[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +128,54 @@ export default function RecorderPanel() {
           </li>
         ))}
       </ul>
+      <div className="form-row" data-testid="rec-retention">
+        <span>滚动清理（0=关闭）:</span>
+        <label>
+          保留天数
+          <input
+            data-testid="rec-retention-days"
+            type="number"
+            min={0}
+            style={{ width: 64 }}
+            value={retention.max_age_days}
+            onChange={(e) =>
+              setRetention({ ...retention, max_age_days: Number(e.target.value) || 0 })
+            }
+          />
+        </label>
+        <label>
+          每房间场次
+          <input
+            data-testid="rec-retention-sessions"
+            type="number"
+            min={0}
+            style={{ width: 64 }}
+            value={retention.max_sessions_per_room}
+            onChange={(e) =>
+              setRetention({
+                ...retention,
+                max_sessions_per_room: Number(e.target.value) || 0,
+              })
+            }
+          />
+        </label>
+        <label>
+          目标剩余(GiB)
+          <input
+            data-testid="rec-retention-free"
+            type="number"
+            min={0}
+            style={{ width: 64 }}
+            value={retention.target_free_gib}
+            onChange={(e) =>
+              setRetention({
+                ...retention,
+                target_free_gib: Number(e.target.value) || 0,
+              })
+            }
+          />
+        </label>
+      </div>
       <NotifySettings />
       <pre className="log" data-testid="rec-log">
         {log.join("\n")}
