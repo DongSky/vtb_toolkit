@@ -13,6 +13,7 @@ members = [
     "crates/vtb-overlay",
     "crates/vtb-notify",
     "crates/vtb-stats",
+    "crates/vtb-hotwords",
     "crates/vtb-e2e",
 ]
 

@@ -8,8 +8,9 @@ import LoginPanel from "./components/LoginPanel";
 import ObsPanel from "./components/ObsPanel";
 import RoomsPanel from "./components/RoomsPanel";
 import ReviewPanel from "./components/ReviewPanel";
+import HotwordsPanel from "./components/HotwordsPanel";
 
-type Tab = "rooms" | "danmaku" | "recorder" | "subtitle" | "offline" | "review" | "obs" | "account";
+type Tab = "rooms" | "danmaku" | "recorder" | "subtitle" | "offline" | "review" | "hotwords" | "obs" | "account";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "rooms", label: "房间" },
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "subtitle", label: "实时字幕" },
   { id: "offline", label: "离线处理" },
   { id: "review", label: "复盘" },
+  { id: "hotwords", label: "热词表" },
   { id: "obs", label: "OBS输出" },
   { id: "account", label: "账号" },
 ];
@@ -45,6 +47,7 @@ function App() {
       {tab === "subtitle" && <SubtitlePanel />}
       {tab === "offline" && <OfflinePanel />}
       {tab === "review" && <ReviewPanel />}
+      {tab === "hotwords" && <HotwordsPanel />}
       {tab === "obs" && <ObsPanel />}
       {tab === "account" && <LoginPanel />}
     </main>

@@ -53,6 +53,9 @@ pub struct OfflineOptions {
     /// 歌切 mode: cut sustained song segments separately.
     #[serde(default)]
     pub song_clips: bool,
+    /// Hotword table names applied to ASR (initial prompt) + translation.
+    #[serde(default)]
+    pub hotword_tables: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -181,13 +184,18 @@ pub async fn offline_process(
             None | Some("auto") => None,
             Some(l) => Some(l.to_string()),
         };
-        let engine = Arc::new(
-            vtb_asr::engine::WhisperEngine::new(
-                std::path::Path::new(&options.model_path),
-                lang,
-            )
-            .map_err(|e| e.to_string())?,
-        );
+        let (hotword_prompt, hotword_glossary) =
+            super::hotwords::load_for_processing(&app, &options.hotword_tables);
+        let mut engine_raw = vtb_asr::engine::WhisperEngine::new(
+            std::path::Path::new(&options.model_path),
+            lang,
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(p) = &hotword_prompt {
+            tracing::info!("ASR 热词表 prompt: {p}");
+            engine_raw = engine_raw.with_initial_prompt(p.clone());
+        }
+        let engine = Arc::new(engine_raw);
 
         let mut job = OfflineJob::new(cfg, engine);
         if options.multimodal {
@@ -214,11 +222,12 @@ pub async fn offline_process(
         }
         if options.translate {
             let backend = build_backend(&app, &options)?;
-            let profile = match &options.profile_path {
+            let mut profile = match &options.profile_path {
                 Some(p) => StreamerProfile::load(std::path::Path::new(p))
                     .map_err(|e| e.to_string())?,
                 None => StreamerProfile::default(),
             };
+            super::hotwords::append_glossary(&mut profile, hotword_glossary.clone());
             job = job.with_translator(backend, profile);
         }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
 import ModelPicker from "./ModelPicker";
 import LlmSettings, { useLlmSettings } from "./LlmSettings";
+import { HotwordSelect } from "./HotwordsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { JobDonePayload, JobProgressPayload } from "../types";
@@ -16,6 +17,7 @@ export default function OfflinePanel() {
   const [multimodal, setMultimodal] = usePersisted("off.multimodal", false);
   const [songClips, setSongClips] = usePersisted("off.songClips", false);
   const { llm } = useLlmSettings();
+  const [hotwords, setHotwords] = usePersisted<string[]>("off.hotwords", []);
   const [progress, setProgress] = useState<JobProgressPayload | null>(null);
   const [done, setDone] = useState<JobDonePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export default function OfflinePanel() {
           burn_subtitles: burnSubs,
           multimodal,
           song_clips: songClips,
+          hotword_tables: hotwords,
           llm_provider: llm.provider || undefined,
           llm_base_url: llm.base_url || undefined,
           llm_model: llm.model || undefined,
@@ -87,6 +90,7 @@ export default function OfflinePanel() {
           onChange={(e) => setModelPath(e.target.value)}
         />
         <ModelPicker value={modelPath} onChange={setModelPath} />
+        <HotwordSelect value={hotwords} onChange={setHotwords} />
         <input
           data-testid="off-danmaku"
           placeholder="弹幕日志 JSONL（可选，用于高能检测）"

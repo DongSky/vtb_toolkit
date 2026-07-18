@@ -36,10 +36,20 @@ mod whisper_impl {
         state: Mutex<WhisperState>,
         /// Language hint; `None` = auto-detect per utterance.
         language: Option<String>,
+        /// Vocabulary/context prompt (热词表) nudging recognition toward
+        /// specific spellings — proper nouns, player IDs, memes.
+        initial_prompt: Option<String>,
         n_threads: i32,
     }
 
     impl WhisperEngine {
+        /// Set the vocabulary prompt (builder style).
+        pub fn with_initial_prompt(mut self, prompt: impl Into<String>) -> Self {
+            let p = prompt.into();
+            self.initial_prompt = (!p.trim().is_empty()).then_some(p);
+            self
+        }
+
         pub fn new(model_path: &Path, language: Option<String>) -> Result<Self> {
             let ctx = WhisperContext::new_with_params(
                 model_path
@@ -57,6 +67,7 @@ mod whisper_impl {
             Ok(Self {
                 state: Mutex::new(state),
                 language,
+                initial_prompt: None,
                 n_threads,
             })
         }
@@ -91,6 +102,9 @@ mod whisper_impl {
             params.set_print_timestamps(false);
             params.set_suppress_blank(true);
             params.set_no_context(true);
+            if let Some(prompt) = &self.initial_prompt {
+                params.set_initial_prompt(prompt);
+            }
 
             state
                 .full(params, pcm)

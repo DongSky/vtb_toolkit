@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
 import ModelPicker from "./ModelPicker";
 import LlmSettings, { useLlmSettings } from "./LlmSettings";
+import { HotwordSelect } from "./HotwordsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -19,6 +20,7 @@ export default function SubtitlePanel() {
   const [modelPath, setModelPath] = usePersisted("sub.modelPath", "");
   const [translate, setTranslate] = usePersisted("sub.translate", false);
   const { llm } = useLlmSettings();
+  const [hotwords, setHotwords] = usePersisted<string[]>("sub.hotwords", []);
   const [running, setRunning] = useState(false);
   const [segments, setSegments] = useState<SubtitleSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +46,7 @@ export default function SubtitlePanel() {
           llm_provider: llm.provider || undefined,
           llm_base_url: llm.base_url || undefined,
           llm_model: llm.model || undefined,
+          hotword_tables: hotwords,
         },
       });
       setRunning(true);
@@ -78,6 +81,7 @@ export default function SubtitlePanel() {
           onChange={(e) => setModelPath(e.target.value)}
         />
         <ModelPicker value={modelPath} onChange={setModelPath} />
+        <HotwordSelect value={hotwords} onChange={setHotwords} />
         <label>
           <input
             type="checkbox"

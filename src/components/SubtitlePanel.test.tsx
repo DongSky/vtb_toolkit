@@ -43,7 +43,10 @@ describe("SubtitlePanel", () => {
           room_id: 77,
           model_path: "/m/ggml-small.bin",
           translate: false,
-          llm_api_key: undefined,
+          llm_provider: undefined,
+          llm_base_url: undefined,
+          llm_model: undefined,
+          hotword_tables: [],
         },
       }),
     );

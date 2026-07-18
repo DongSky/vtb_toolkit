@@ -35,6 +35,9 @@ pub struct LiveSubtitleOptions {
     pub llm_base_url: Option<String>,
     #[serde(default)]
     pub profile_path: Option<String>,
+    /// Hotword table names applied to ASR + translation.
+    #[serde(default)]
+    pub hotword_tables: Vec<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -85,13 +88,17 @@ pub async fn live_subtitle_start(
             None | Some("auto") => None,
             Some(l) => Some(l.to_string()),
         };
-        let engine = Arc::new(
-            vtb_asr::engine::WhisperEngine::new(
-                std::path::Path::new(&options.model_path),
-                lang,
-            )
-            .map_err(|e| e.to_string())?,
-        );
+        let (hotword_prompt, hotword_glossary) =
+            super::hotwords::load_for_processing(&app, &options.hotword_tables);
+        let mut engine_raw = vtb_asr::engine::WhisperEngine::new(
+            std::path::Path::new(&options.model_path),
+            lang,
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(p) = &hotword_prompt {
+            engine_raw = engine_raw.with_initial_prompt(p.clone());
+        }
+        let engine = Arc::new(engine_raw);
 
         // Optional translator.
         let translator = if options.translate {
@@ -102,11 +109,12 @@ pub async fn live_subtitle_start(
                 options.llm_model.clone(),
                 options.llm_base_url.clone(),
             )?;
-            let profile = match &options.profile_path {
+            let mut profile = match &options.profile_path {
                 Some(p) => StreamerProfile::load(std::path::Path::new(p))
                     .map_err(|e| e.to_string())?,
                 None => StreamerProfile::default(),
             };
+            super::hotwords::append_glossary(&mut profile, hotword_glossary.clone());
             Some(TranslatePipeline::new(
                 backend,
                 profile,

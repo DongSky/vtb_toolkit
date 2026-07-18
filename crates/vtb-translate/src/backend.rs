@@ -27,6 +27,7 @@ pub struct AnthropicBackend {
     api_key: String,
     model: String,
     base_url: String,
+    max_tokens: u32,
 }
 
 impl AnthropicBackend {
@@ -36,7 +37,13 @@ impl AnthropicBackend {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.anthropic.com".into(),
+            max_tokens: 4096,
         }
+    }
+
+    pub fn with_max_tokens(mut self, n: u32) -> Self {
+        self.max_tokens = n;
+        self
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
@@ -55,7 +62,7 @@ impl LlmBackend for AnthropicBackend {
             .header("anthropic-version", "2023-06-01")
             .json(&json!({
                 "model": self.model,
-                "max_tokens": 512,
+                "max_tokens": self.max_tokens,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             }))
@@ -86,6 +93,7 @@ pub struct OpenAiCompatBackend {
     api_key: String,
     model: String,
     base_url: String,
+    max_tokens: u32,
 }
 
 impl OpenAiCompatBackend {
@@ -99,7 +107,13 @@ impl OpenAiCompatBackend {
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
+            max_tokens: 4096,
         }
+    }
+
+    pub fn with_max_tokens(mut self, n: u32) -> Self {
+        self.max_tokens = n;
+        self
     }
 }
 
@@ -116,7 +130,7 @@ impl LlmBackend for OpenAiCompatBackend {
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "max_tokens": 512,
+                "max_tokens": self.max_tokens,
             }))
             .send()
             .await?;
