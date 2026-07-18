@@ -5200,6 +5200,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.24.0",
+ "vtb-account",
  "vtb-asr",
  "vtb-common",
  "vtb-danmaku",

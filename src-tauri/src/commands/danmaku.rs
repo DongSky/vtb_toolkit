@@ -93,6 +93,12 @@ pub async fn danmaku_connect(
     let app2 = app.clone();
     let publisher = state.overlay_publisher.clone();
     let translate = state.danmaku_translate.clone();
+    // 场控: auto-thank (config shared; worker spawned lazily).
+    let autothank = state.autothank.clone();
+    let send_tx = state
+        .danmaku_send_tx
+        .get_or_init(|| super::danmaku_send::spawn_send_worker(app.clone()))
+        .clone();
     let notifier = std::sync::Arc::new(super::recorder::load_notifier(&app));
     // TTS: serial speech worker (lazy) + switch handles for the pump.
     let tts_tx = state
@@ -128,6 +134,17 @@ pub async fn danmaku_connect(
                         let paid = tts_paid_only.load(std::sync::atomic::Ordering::Relaxed);
                         if let Some(text) = super::tts::should_speak(&live, paid) {
                             let _ = tts_tx.try_send(text);
+                        }
+                    }
+                    // 场控: auto-thank gifts / guards / SC (rate-limited
+                    // worker; drops when saturated).
+                    let thanks = {
+                        let cfg = autothank.lock().unwrap();
+                        super::danmaku_send::format_thanks(&cfg, &live)
+                    };
+                    if let Some(line) = thanks {
+                        if send_tx.try_send((room_id, line)).is_err() {
+                            tracing::debug!("auto-thank dropped (queue full)");
                         }
                     }
                     // Auto-translation: hand the line to the worker (if

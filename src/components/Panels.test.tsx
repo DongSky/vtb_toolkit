@@ -78,6 +78,122 @@ describe("DanmakuPanel", () => {
     );
   });
 
+  it("starts auto-translation and attaches translations by tid", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "danmaku_translate_status") return Promise.resolve(null);
+      if (cmd === "danmaku_status" || cmd === "danmaku_timer_status")
+        return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+    render(<DanmakuPanel />);
+    await waitFor(() =>
+      expect(listenHandlers["danmaku://translation"]).toBeDefined(),
+    );
+    fireEvent.click(screen.getByTestId("dm-translate-toggle"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("danmaku_translate_start", {
+        options: { target_lang: "ja" },
+      }),
+    );
+    // Event with tid, then its translation arrives.
+    listenHandlers["danmaku://event"]({
+      payload: {
+        kind: "danmaku",
+        room_id: 1,
+        uid: 9,
+        username: "测试君",
+        text: "主播好可爱",
+        timestamp: new Date().toISOString(),
+        medal: null,
+        guard_level: 0,
+        is_admin: false,
+        emoticon: null,
+        tid: 5,
+      },
+    });
+    listenHandlers["danmaku://translation"]({
+      payload: { tid: 5, translated: "かわいい配信者" },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("dm-translated")).toHaveTextContent(
+        "かわいい配信者",
+      ),
+    );
+  });
+
+  it("场控: sends a danmaku and toggles auto-thank", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "danmaku_autothank_get")
+        return Promise.resolve({
+          thank_gift: false,
+          thank_guard: false,
+          thank_sc: false,
+          gift_template: "感谢 {user} 投喂的 {gift} ×{count}！",
+          guard_template: "感谢 {user} 开通{level}！",
+          sc_template: "感谢 {user} 的SC！",
+          min_gift_price: 0,
+        });
+      if (cmd === "danmaku_translate_status") return Promise.resolve(null);
+      if (cmd === "danmaku_status" || cmd === "danmaku_timer_status")
+        return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+    render(<DanmakuPanel />);
+    fireEvent.change(screen.getByTestId("dm-room"), {
+      target: { value: "320" },
+    });
+    fireEvent.click(screen.getByTestId("dm-ctrl-toggle"));
+    await waitFor(() =>
+      expect(screen.getByTestId("dm-thank-gift")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByTestId("dm-send-text"), {
+      target: { value: "前排" },
+    });
+    fireEvent.click(screen.getByTestId("dm-send-btn"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("danmaku_send", {
+        roomId: 320,
+        text: "前排",
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("dm-thank-gift"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "danmaku_autothank_set",
+        expect.objectContaining({
+          config: expect.objectContaining({ thank_gift: true }),
+        }),
+      ),
+    );
+  });
+
+  it("场控: starts a timed announcement", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "danmaku_translate_status") return Promise.resolve(null);
+      if (cmd === "danmaku_status") return Promise.resolve([]);
+      if (cmd === "danmaku_timer_status") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+    render(<DanmakuPanel />);
+    fireEvent.change(screen.getByTestId("dm-room"), {
+      target: { value: "320" },
+    });
+    fireEvent.click(screen.getByTestId("dm-ctrl-toggle"));
+    fireEvent.change(screen.getByTestId("dm-timer-text"), {
+      target: { value: "关注主播喵" },
+    });
+    fireEvent.click(screen.getByTestId("dm-timer-toggle"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("danmaku_timer_start", {
+        roomId: 320,
+        text: "关注主播喵",
+        intervalSecs: 300,
+      }),
+    );
+  });
+
   it("theme selector switches theme and editor saves custom theme", async () => {
     invokeMock.mockResolvedValue([]);
     render(<DanmakuPanel />);

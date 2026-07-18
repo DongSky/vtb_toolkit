@@ -133,6 +133,11 @@ impl BiliApi {
         }
     }
 
+    /// The underlying HTTP client (for sibling modules, e.g. `send`).
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// Build with a default client carrying a browser-like UA + referer.
     pub fn default_client() -> Result<Self> {
         let http = reqwest::Client::builder()

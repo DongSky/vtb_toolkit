@@ -191,6 +191,23 @@ button:disabled {
   font-size: 0.85em;
 }
 
+.dm-ctrl {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 6px 0;
+}
+
+.dm-send-ok {
+  color: #4a4;
+  font-size: 0.85em;
+}
+
+.dm-ctrl .hint {
+  opacity: 0.6;
+  font-size: 0.8em;
+}
+
 /* entry animations */
 .dm-anim-fade {
   animation: dm-fade 0.25s ease-out;

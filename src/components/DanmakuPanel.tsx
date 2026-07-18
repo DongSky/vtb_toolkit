@@ -3,6 +3,16 @@ import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { DanmakuTranslationPayload, LiveEvent } from "../types";
+
+export interface AutoThankConfig {
+  thank_gift: boolean;
+  thank_guard: boolean;
+  thank_sc: boolean;
+  gift_template: string;
+  guard_template: string;
+  sc_template: string;
+  min_gift_price: number;
+}
 import type { DanmakuTheme } from "../themes";
 import { allThemes, loadCustomThemes, saveCustomThemes } from "../themes";
 import DanmakuList from "./DanmakuList";
@@ -19,6 +29,14 @@ export default function DanmakuPanel() {
   const [trTarget, setTrTarget] = usePersisted("dm.translate_target", "ja");
   const [trOn, setTrOn] = useState(false);
   const [translations, setTranslations] = useState<Record<number, string>>({});
+  // 场控
+  const [showCtrl, setShowCtrl] = useState(false);
+  const [sendText, setSendText] = useState("");
+  const [sendOk, setSendOk] = useState<string | null>(null);
+  const [thank, setThank] = useState<AutoThankConfig | null>(null);
+  const [timerText, setTimerText] = usePersisted("dm.timer_text", "");
+  const [timerSecs, setTimerSecs] = usePersisted("dm.timer_secs", "300");
+  const [timerRooms, setTimerRooms] = useState<number[]>([]);
 
   const theme = useMemo(
     () => themes.find((t) => t.id === themeId) ?? themes[0],
@@ -50,6 +68,12 @@ export default function DanmakuPanel() {
     invoke<string | null>("danmaku_translate_status")
       .then((t) => setTrOn(t != null))
       .catch(() => {});
+    invoke<AutoThankConfig>("danmaku_autothank_get")
+      .then(setThank)
+      .catch(() => {});
+    invoke<number[]>("danmaku_timer_status")
+      .then(setTimerRooms)
+      .catch(() => {});
     return () => {
       un.then((f) => f());
       unTr.then((f) => f());
@@ -68,6 +92,50 @@ export default function DanmakuPanel() {
         });
         setTrOn(true);
       }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const roomNum = Number(roomId);
+
+  const sendDanmaku = async () => {
+    setError(null);
+    setSendOk(null);
+    try {
+      await invoke("danmaku_send", { roomId: roomNum, text: sendText });
+      setSendOk("已发送");
+      setSendText("");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const updateThank = async (patch: Partial<AutoThankConfig>) => {
+    if (!thank) return;
+    const next = { ...thank, ...patch };
+    setThank(next);
+    try {
+      await invoke("danmaku_autothank_set", { config: next });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const timerRunning = timerRooms.includes(roomNum);
+  const toggleTimer = async () => {
+    setError(null);
+    try {
+      if (timerRunning) {
+        await invoke("danmaku_timer_stop", { roomId: roomNum });
+      } else {
+        await invoke("danmaku_timer_start", {
+          roomId: roomNum,
+          text: timerText,
+          intervalSecs: Number(timerSecs) || 300,
+        });
+      }
+      setTimerRooms(await invoke<number[]>("danmaku_timer_status"));
     } catch (e) {
       setError(String(e));
     }
@@ -148,7 +216,102 @@ export default function DanmakuPanel() {
           {trOn ? "停止翻译" : "开启翻译"}
         </button>
         {trOn && <span className="dm-translate-on">翻译中（LLM 设置见「设置」）</span>}
+        <button data-testid="dm-ctrl-toggle" onClick={() => setShowCtrl(!showCtrl)}>
+          {showCtrl ? "收起场控" : "场控"}
+        </button>
       </div>
+      {showCtrl && (
+        <div className="dm-ctrl" data-testid="dm-ctrl">
+          <div className="form-row">
+            <input
+              data-testid="dm-send-text"
+              placeholder="以自己账号发送弹幕（需登录）"
+              value={sendText}
+              maxLength={40}
+              onChange={(e) => setSendText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && sendText.trim() && roomNum) sendDanmaku();
+              }}
+            />
+            <button
+              data-testid="dm-send-btn"
+              disabled={!sendText.trim() || !roomNum}
+              onClick={sendDanmaku}
+            >
+              发送
+            </button>
+            {sendOk && <span className="dm-send-ok">{sendOk}</span>}
+          </div>
+          {thank && (
+            <div className="dm-thank">
+              <div className="form-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    data-testid="dm-thank-gift"
+                    checked={thank.thank_gift}
+                    onChange={(e) => updateThank({ thank_gift: e.target.checked })}
+                  />
+                  答谢礼物
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    data-testid="dm-thank-guard"
+                    checked={thank.thank_guard}
+                    onChange={(e) => updateThank({ thank_guard: e.target.checked })}
+                  />
+                  答谢舰长
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    data-testid="dm-thank-sc"
+                    checked={thank.thank_sc}
+                    onChange={(e) => updateThank({ thank_sc: e.target.checked })}
+                  />
+                  答谢SC
+                </label>
+              </div>
+              {thank.thank_gift && (
+                <div className="form-row">
+                  <input
+                    data-testid="dm-thank-gift-template"
+                    value={thank.gift_template}
+                    onChange={(e) => updateThank({ gift_template: e.target.value })}
+                  />
+                  <span className="hint">占位符 {"{user} {gift} {count} {price}"}</span>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="form-row">
+            <input
+              data-testid="dm-timer-text"
+              placeholder="定时弹幕内容"
+              value={timerText}
+              maxLength={40}
+              onChange={(e) => setTimerText(e.target.value)}
+            />
+            <input
+              data-testid="dm-timer-secs"
+              type="number"
+              min={30}
+              style={{ width: 80 }}
+              value={timerSecs}
+              onChange={(e) => setTimerSecs(e.target.value)}
+            />
+            <span>秒/次</span>
+            <button
+              data-testid="dm-timer-toggle"
+              disabled={!timerRunning && (!timerText.trim() || !roomNum)}
+              onClick={toggleTimer}
+            >
+              {timerRunning ? "停止定时" : "启动定时"}
+            </button>
+          </div>
+        </div>
+      )}
       {error && (
         <div className="error" data-testid="dm-error">
           {error}

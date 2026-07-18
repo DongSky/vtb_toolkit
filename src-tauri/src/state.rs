@@ -24,6 +24,12 @@ pub struct AppState {
     /// Danmaku auto-translation worker (blivechat-style). Shared with the
     /// danmaku pumps via Arc so start/stop applies to live connections.
     pub danmaku_translate: std::sync::Arc<Mutex<Option<DanmakuTranslateHandle>>>,
+    /// 场控: auto-thank config (shared with pumps), serial send worker and
+    /// per-room timed announcements.
+    pub autothank: crate::commands::danmaku_send::SharedAutoThank,
+    pub danmaku_send_tx:
+        std::sync::OnceLock<tokio::sync::mpsc::Sender<(u64, String)>>,
+    pub danmaku_timers: Mutex<HashMap<u64, JoinHandle<()>>>,
     /// Danmaku TTS switches + speech queue (Arc so pump tasks can hold them).
     pub tts_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub tts_paid_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -42,6 +48,9 @@ impl Default for AppState {
             overlay_publisher: vtb_overlay::publisher(),
             overlay: tokio::sync::Mutex::default(),
             danmaku_translate: std::sync::Arc::new(Mutex::new(None)),
+            autothank: std::sync::Arc::new(Mutex::new(Default::default())),
+            danmaku_send_tx: std::sync::OnceLock::new(),
+            danmaku_timers: Mutex::default(),
             tts_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_paid_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_tx: std::sync::OnceLock::new(),
