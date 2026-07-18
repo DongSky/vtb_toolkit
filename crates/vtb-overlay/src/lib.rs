@@ -24,7 +24,16 @@ use vtb_common::LiveEvent;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OverlayMessage {
-    Danmaku(LiveEvent),
+    Danmaku {
+        #[serde(flatten)]
+        event: LiveEvent,
+        /// Translation correlation id (set when 弹幕自动翻译 is running so
+        /// the page can attach the translation once it arrives).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tid: Option<u64>,
+    },
+    /// Async translation for an earlier danmaku, keyed by `tid`.
+    DanmakuTranslation { tid: u64, translated: String },
     Subtitle {
         text: String,
         translated: Option<String>,
@@ -287,21 +296,46 @@ mod tests {
     async fn danmaku_events_roundtrip_serialization() {
         use chrono::Utc;
         use vtb_common::DanmakuMsg;
-        let msg = OverlayMessage::Danmaku(LiveEvent::Danmaku(DanmakuMsg {
-            room_id: 1,
-            uid: 2,
-            username: "观众".into(),
-            text: "hello".into(),
-            timestamp: Utc::now(),
-            medal: None,
-            guard_level: 0,
-            is_admin: false,
-            emoticon: None,
-        }));
+        let msg = OverlayMessage::Danmaku {
+            event: LiveEvent::Danmaku(DanmakuMsg {
+                room_id: 1,
+                uid: 2,
+                username: "观众".into(),
+                text: "hello".into(),
+                timestamp: Utc::now(),
+                medal: None,
+                guard_level: 0,
+                is_admin: false,
+                emoticon: None,
+            }),
+            tid: Some(7),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "danmaku");
         assert_eq!(v["kind"], "danmaku");
         assert_eq!(v["username"], "观众");
+        assert_eq!(v["tid"], 7);
+
+        // Without a tid the key is omitted entirely (wire-compatible with
+        // pre-translation clients).
+        let msg2 = OverlayMessage::Danmaku {
+            event: LiveEvent::WatchedChange { room_id: 1, count: 3 },
+            tid: None,
+        };
+        let v2: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg2).unwrap()).unwrap();
+        assert!(v2.get("tid").is_none());
+
+        // Translation message shape used by the overlay page JS.
+        let tr = OverlayMessage::DanmakuTranslation {
+            tid: 7,
+            translated: "你好".into(),
+        };
+        let vt: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&tr).unwrap()).unwrap();
+        assert_eq!(vt["type"], "danmaku_translation");
+        assert_eq!(vt["tid"], 7);
+        assert_eq!(vt["translated"], "你好");
     }
 }

@@ -17,6 +17,25 @@ struct StatusPayload {
     message: String,
 }
 
+/// LiveEvent + optional translation correlation id for the frontend list.
+#[derive(serde::Serialize, Clone)]
+struct DanmakuEmit<'a> {
+    #[serde(flatten)]
+    event: &'a vtb_common::LiveEvent,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tid: Option<u64>,
+}
+
+/// Translatable text of an event (plain danmaku & SuperChat; stickers
+/// excluded — their text is just the emote name).
+fn translatable_text(ev: &vtb_common::LiveEvent) -> Option<&str> {
+    match ev {
+        vtb_common::LiveEvent::Danmaku(d) if d.emoticon.is_none() => Some(&d.text),
+        vtb_common::LiveEvent::SuperChat(s) => Some(&s.text),
+        _ => None,
+    }
+}
+
 fn state_payload(room_id: u64, s: &ConnState) -> StatusPayload {
     match s {
         ConnState::Connecting { attempt } => StatusPayload {
@@ -73,6 +92,7 @@ pub async fn danmaku_connect(
 
     let app2 = app.clone();
     let publisher = state.overlay_publisher.clone();
+    let translate = state.danmaku_translate.clone();
     let notifier = std::sync::Arc::new(super::recorder::load_notifier(&app));
     // TTS: serial speech worker (lazy) + switch handles for the pump.
     let tts_tx = state
@@ -110,9 +130,34 @@ pub async fn danmaku_connect(
                             let _ = tts_tx.try_send(text);
                         }
                     }
+                    // Auto-translation: hand the line to the worker (if
+                    // running) and tag the outgoing event with a tid so the
+                    // UI/overlay can attach the result later.
+                    let mut tid = None;
+                    if let Some(text) = translatable_text(&live) {
+                        let guard = translate.lock().unwrap();
+                        if let Some(h) = guard.as_ref() {
+                            if !h.task.is_finished()
+                                && vtb_translate::danmaku::should_translate_danmaku(
+                                    text,
+                                    &h.target_lang,
+                                )
+                            {
+                                let id = super::danmaku_translate::next_tid();
+                                // Drop when the queue is full: stale chat
+                                // translations are worthless.
+                                if h.tx.try_send((id, text.to_string())).is_ok() {
+                                    tid = Some(id);
+                                }
+                            }
+                        }
+                    }
                     // Mirror to the OBS overlay (no-op when not running).
-                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku(live.clone()));
-                    app2.emit(EVENT_DANMAKU, &live).is_ok()
+                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku {
+                        event: live.clone(),
+                        tid,
+                    });
+                    app2.emit(EVENT_DANMAKU, DanmakuEmit { event: &live, tid }).is_ok()
                 }
                 ManagedEvent::State(s) => {
                     let done = matches!(s, ConnState::Stopped);

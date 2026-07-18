@@ -61,7 +61,7 @@ async fn main() {
             _ = tokio::time::sleep_until(deadline) => break,
             ev = rx.recv() => match ev {
                 Some(ManagedEvent::Live(live)) => {
-                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku(live));
+                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku { event: live, tid: None });
                     published += 1;
                 }
                 Some(_) => {}

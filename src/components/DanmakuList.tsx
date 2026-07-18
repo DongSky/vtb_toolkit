@@ -7,6 +7,8 @@ export interface DanmakuListProps {
   theme: DanmakuTheme;
   /** Cap rendered rows (older rows dropped). */
   maxRows?: number;
+  /** Async translations keyed by event tid (弹幕自动翻译). */
+  translations?: Record<number, string>;
 }
 
 function guardName(level: number): string {
@@ -17,7 +19,20 @@ function rowKey(ev: LiveEvent, i: number): string {
   return `${i}-${ev.kind}`;
 }
 
-export function DanmakuRow({ ev, theme }: { ev: LiveEvent; theme: DanmakuTheme }) {
+export function DanmakuRow({
+  ev,
+  theme,
+  translated,
+}: {
+  ev: LiveEvent;
+  theme: DanmakuTheme;
+  translated?: string;
+}) {
+  const tr = translated ? (
+    <span className="dm-translated" data-testid="dm-translated">
+      {translated}
+    </span>
+  ) : null;
   switch (ev.kind) {
     case "danmaku":
       return (
@@ -41,6 +56,7 @@ export function DanmakuRow({ ev, theme }: { ev: LiveEvent; theme: DanmakuTheme }
           ) : (
             <span className="dm-text">{ev.text}</span>
           )}
+          {tr}
         </div>
       );
     case "super_chat":
@@ -49,6 +65,7 @@ export function DanmakuRow({ ev, theme }: { ev: LiveEvent; theme: DanmakuTheme }
           <span className="dm-sc-price">¥{ev.price}</span>
           <span className="dm-username">{ev.username}</span>
           <span className="dm-text">{ev.text}</span>
+          {tr}
         </div>
       );
     case "gift":
@@ -81,7 +98,12 @@ export function DanmakuRow({ ev, theme }: { ev: LiveEvent; theme: DanmakuTheme }
   }
 }
 
-export default function DanmakuList({ events, theme, maxRows = 200 }: DanmakuListProps) {
+export default function DanmakuList({
+  events,
+  theme,
+  maxRows = 200,
+  translations,
+}: DanmakuListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const shown = events.slice(-maxRows);
 
@@ -96,7 +118,14 @@ export default function DanmakuList({ events, theme, maxRows = 200 }: DanmakuLis
       style={theme.vars as React.CSSProperties}
     >
       {shown.map((ev, i) => (
-        <DanmakuRow key={rowKey(ev, i)} ev={ev} theme={theme} />
+        <DanmakuRow
+          key={rowKey(ev, i)}
+          ev={ev}
+          theme={theme}
+          translated={
+            ev.tid !== undefined ? translations?.[ev.tid] : undefined
+          }
+        />
       ))}
       <div ref={bottomRef} />
     </div>

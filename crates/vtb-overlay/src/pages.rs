@@ -39,6 +39,12 @@ pub const DANMAKU_HTML: &str = r#"<!DOCTYPE html>
   .row.gift .t { color: #ffb3d0; }
   .row.guard .t { color: #d9b3ff; }
   .row.enter { opacity: .6; font-size: calc(var(--fs, 18px) * .85); }
+  .row .tr {
+    display: block;
+    color: #ffe9a8;
+    font-size: calc(var(--fs, 18px) * .88);
+    margin-top: 1px;
+  }
   @keyframes in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
 </style>
 </head>
@@ -88,9 +94,20 @@ pub const DANMAKU_HTML: &str = r#"<!DOCTYPE html>
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
+      if (m.type === "danmaku_translation") {
+        const row = list.querySelector(`[data-tid="${m.tid}"]`);
+        if (row) {
+          const tr = document.createElement("span");
+          tr.className = "tr";
+          tr.textContent = m.translated;
+          row.appendChild(tr);
+        }
+        return;
+      }
       if (m.type !== "danmaku") return;
       const div = row(m);
       if (!div) return;
+      if (m.tid != null) div.dataset.tid = m.tid;
       list.appendChild(div);
       while (list.children.length > MAX) list.removeChild(list.firstChild);
     };

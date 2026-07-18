@@ -21,6 +21,9 @@ pub struct AppState {
     /// OBS overlay: publisher lives for the whole app; server on demand.
     pub overlay_publisher: vtb_overlay::OverlayPublisher,
     pub overlay: tokio::sync::Mutex<Option<vtb_overlay::OverlayServer>>,
+    /// Danmaku auto-translation worker (blivechat-style). Shared with the
+    /// danmaku pumps via Arc so start/stop applies to live connections.
+    pub danmaku_translate: std::sync::Arc<Mutex<Option<DanmakuTranslateHandle>>>,
     /// Danmaku TTS switches + speech queue (Arc so pump tasks can hold them).
     pub tts_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub tts_paid_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -38,6 +41,7 @@ impl Default for AppState {
             qr_login: tokio::sync::Mutex::default(),
             overlay_publisher: vtb_overlay::publisher(),
             overlay: tokio::sync::Mutex::default(),
+            danmaku_translate: std::sync::Arc::new(Mutex::new(None)),
             tts_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_paid_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_tx: std::sync::OnceLock::new(),
@@ -48,6 +52,14 @@ impl Default for AppState {
 pub struct DanmakuHandles {
     pub pump: JoinHandle<()>,
     pub stop: tokio::sync::watch::Sender<bool>,
+}
+
+/// Running danmaku translation worker. Pumps `try_send` jobs into `tx`;
+/// the worker translates serially and publishes results.
+pub struct DanmakuTranslateHandle {
+    pub tx: tokio::sync::mpsc::Sender<(u64, String)>,
+    pub task: JoinHandle<()>,
+    pub target_lang: String,
 }
 
 pub struct RecorderHandles {

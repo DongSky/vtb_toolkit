@@ -113,4 +113,26 @@ describe("DanmakuList", () => {
     render(<DanmakuList events={[ev]} theme={theme} />);
     expect(screen.queryAllByTestId(/dm-/).length).toBe(1); // only the list itself
   });
+
+  it("renders translation under a danmaku matched by tid", () => {
+    const events = [danmaku("配信たのしい", { tid: 42 } as Partial<LiveEvent>)];
+    render(
+      <DanmakuList
+        events={events}
+        theme={theme}
+        translations={{ 42: "直播真开心" }}
+      />,
+    );
+    expect(screen.getByTestId("dm-translated")).toHaveTextContent(
+      "直播真开心",
+    );
+  });
+
+  it("shows no translation line without a tid match", () => {
+    const events = [danmaku("配信たのしい", { tid: 1 } as Partial<LiveEvent>)];
+    render(
+      <DanmakuList events={events} theme={theme} translations={{ 42: "x" }} />,
+    );
+    expect(screen.queryByTestId("dm-translated")).not.toBeInTheDocument();
+  });
 });

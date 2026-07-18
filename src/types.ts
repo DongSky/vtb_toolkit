@@ -56,7 +56,7 @@ export interface EnterMsg {
   timestamp: string;
 }
 
-export type LiveEvent =
+export type LiveEvent = (
   | ({ kind: "danmaku" } & DanmakuMsg)
   | ({ kind: "super_chat" } & SuperChatMsg)
   | ({ kind: "gift" } & GiftMsg)
@@ -65,7 +65,16 @@ export type LiveEvent =
   | ({ kind: "like" } & EnterMsg)
   | { kind: "live_start"; room_id: number; timestamp: string }
   | { kind: "live_end"; room_id: number; timestamp: string }
-  | { kind: "watched_change"; room_id: number; count: number };
+  | { kind: "watched_change"; room_id: number; count: number }
+) & {
+  /** Translation correlation id (present when 弹幕自动翻译 is running). */
+  tid?: number;
+};
+
+export interface DanmakuTranslationPayload {
+  tid: number;
+  translated: string;
+}
 
 export interface RecorderEventPayload {
   kind: "started" | "stopped" | "error";

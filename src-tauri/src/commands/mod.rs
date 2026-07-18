@@ -2,6 +2,7 @@ pub mod asr_models;
 pub mod auth;
 pub mod config;
 pub mod danmaku;
+pub mod danmaku_translate;
 pub mod hooks;
 pub mod hotwords;
 pub mod llm;
