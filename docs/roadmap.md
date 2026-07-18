@@ -159,3 +159,33 @@
 
 ### 本轮补强(响应用户反馈)
 - 翻译/AI 接口全链路可配置:provider(Anthropic/OpenAI兼容)+ API Base + 模型 + Key(钥匙串),解析优先级 显式→settings→环境变量→钥匙串→默认;修复实时字幕命令不传 base_url 的缺陷
+
+---
+
+## 三轮盘点完成状态(2026-07-18 晚)
+
+按「P1 → P2(测试通过)→ P3」目标全部落地:
+
+**P1(全部完成)**
+- 弹幕自动翻译显示:`vtb-translate::danmaku` 语种脚本启发式过滤 + 串行限流 worker(满则丢弃),overlay 弹幕行按 tid 追加译文,App 内弹幕列表同步显示;复用热词 glossary;`diag_danmaku_translate`
+- 弹幕发送/场控:`vtb-danmaku::send`(msg/send + csrf=bili_jct,过滤/限频/重复码解码);手动发送 + 答谢礼物/舰长/SC 模板(默认关,≥3s 限流)+ 定时弹幕(≥30s);`diag_danmaku_send`
+- FLV tag 级时间戳修复:`vtb-recorder::flv` 流式重写(前跳>5s/回跳>500ms 重定基,payload 逐字节拷贝,截断尾容忍);录制结束自动修复 + `flv_repair` 工具箱命令;`diag_flv_repair`
+
+**P2(全部完成)**
+- 滚动清理:`vtb-recorder::retention`(按天龄/每房间场次/目标剩余空间,活动会话保护),录制开始时触发,RecorderPanel 可配
+- 备线切换:playurl 全部 url_info host 保留为 backup_urls,supervisor 失败时先切备线再重新解流(健康运行后清空);流参数变化天然分割(ffmpeg -c copy 退出→新 part)
+- 词云可视化 + 发言榜(WordCloud 组件,复盘页渲染 word_freq/top_chatters)
+- 内置预览播放器(assetProtocol + convertFileSrc,预览录播/切片,时间轴点击跳转)
+
+**P3(代码可完成项全部完成)**
+- 剪辑工程导出:CMX3600 EDL(`vtb-highlight::export` + 复盘页按钮)
+- 用户备注/粉丝画像:`vtb-stats::users`(备注 + 跨场次画像),弹幕列表备注标签、点击用户名编辑
+- Twitch 聊天:匿名 IRC-over-WSS → LiveEvent 归一化,共享 overlay/翻译管线;`diag_twitch`
+- 多平台录制 UI:URL → Platform trait(yt-dlp)→ supervise_recording,等待开播循环,RecorderPanel URL 录制区
+
+**P3 未做(环境受限,非代码问题)**
+- 签名自动更新/安装包分发(需发布密钥与分发端点)
+- Windows/Linux 全功能验证(需对应主机;TTS 仅 macOS、非 unix 磁盘检测返回 MAX 保持原状)
+- YouTube 聊天(InnerTube 轮询协议,工作量大,列为后续)
+
+测试基线:cargo workspace 全绿(vtb-recorder 的 stall 重启测试在并行负载下偶发 flaky,单独重跑通过)+ 前端 64 用例全绿。
