@@ -17,6 +17,7 @@ pub mod clip;
 pub mod multimodal;
 pub mod realtime;
 pub mod music;
+pub mod export;
 
 pub use error::HighlightError;
 pub use fusion::{FusionConfig, detect_highlights};

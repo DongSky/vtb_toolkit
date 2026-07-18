@@ -8,6 +8,10 @@ use vtb_account::{Credentials, QrLogin};
 pub struct AppState {
     /// room_id → managed danmaku connection.
     pub danmaku: Mutex<HashMap<u64, DanmakuHandles>>,
+    /// twitch channel → chat connection.
+    pub twitch: Mutex<HashMap<String, DanmakuHandles>>,
+    /// platform URL slug → multi-platform recording task.
+    pub platform_recorders: Mutex<HashMap<String, PlatformRecHandles>>,
     /// room_id → (monitor task, recorder task).
     pub recorders: Mutex<HashMap<u64, RecorderHandles>>,
     /// job id → offline job task.
@@ -40,6 +44,8 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             danmaku: Mutex::default(),
+            twitch: Mutex::default(),
+            platform_recorders: Mutex::default(),
             recorders: Mutex::default(),
             jobs: Mutex::default(),
             subtitles: Mutex::default(),
@@ -59,6 +65,12 @@ impl Default for AppState {
 }
 
 pub struct DanmakuHandles {
+    pub pump: JoinHandle<()>,
+    pub stop: tokio::sync::watch::Sender<bool>,
+}
+
+/// Multi-platform (yt-dlp) recording task handles.
+pub struct PlatformRecHandles {
     pub pump: JoinHandle<()>,
     pub stop: tokio::sync::watch::Sender<bool>,
 }

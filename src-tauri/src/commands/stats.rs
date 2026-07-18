@@ -44,3 +44,39 @@ pub async fn stats_export(
         csv.to_string_lossy().into_owned(),
     ])
 }
+
+fn open_db(app: &AppHandle) -> Result<vtb_stats::StatsDb, String> {
+    let db_path = super::recorder::stats_db_path(app).ok_or("no data dir")?;
+    vtb_stats::StatsDb::open(&db_path).map_err(|e| e.to_string())
+}
+
+/// Set (or clear with empty text) a viewer's 备注.
+#[tauri::command]
+pub async fn user_note_set(
+    app: AppHandle,
+    uid: u64,
+    username: String,
+    note: String,
+) -> Result<(), String> {
+    open_db(&app)?
+        .set_note(uid, &username, &note, chrono::Utc::now())
+        .map_err(|e| e.to_string())
+}
+
+/// All viewer notes (hydrates the danmaku list's tag map).
+#[tauri::command]
+pub async fn user_notes_list(app: AppHandle) -> Result<Vec<vtb_stats::UserNote>, String> {
+    open_db(&app)?.list_notes().map_err(|e| e.to_string())
+}
+
+/// 粉丝画像: a viewer's cross-session history + note.
+#[tauri::command]
+pub async fn user_profile(
+    app: AppHandle,
+    uid: u64,
+    username: String,
+) -> Result<vtb_stats::UserProfile, String> {
+    open_db(&app)?
+        .user_profile(uid, &username)
+        .map_err(|e| e.to_string())
+}

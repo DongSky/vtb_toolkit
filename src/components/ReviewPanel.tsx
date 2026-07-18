@@ -271,6 +271,21 @@ export default function ReviewPanel() {
             />
           )}
           <h3>高能片段（{data.highlights.length}）</h3>
+          {data.highlights.length > 0 && (
+            <button
+              data-testid="review-edl-export"
+              onClick={async () => {
+                try {
+                  const out = await invoke<string>("edl_export", { dir });
+                  setExportMsg(`EDL 已导出: ${out}`);
+                } catch (e) {
+                  setExportMsg(`EDL 导出失败: ${e}`);
+                }
+              }}
+            >
+              导出剪辑工程 (EDL)
+            </button>
+          )}
           <ul data-testid="review-highlights">
             {data.highlights.map((h, i) => (
               <li key={i}>

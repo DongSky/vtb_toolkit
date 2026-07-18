@@ -9,6 +9,15 @@ export interface DanmakuListProps {
   maxRows?: number;
   /** Async translations keyed by event tid (弹幕自动翻译). */
   translations?: Record<number, string>;
+  /** Viewer 备注 tags, keyed by note_key (uid:N / name:U). */
+  notes?: Record<string, string>;
+  /** Click a username → edit that viewer's note. */
+  onUserClick?: (uid: number, username: string) => void;
+}
+
+/** Matches the backend's note_key (vtb-stats::note_key). */
+export function noteKey(uid: number, username: string): string {
+  return uid !== 0 ? `uid:${uid}` : `name:${username}`;
 }
 
 function guardName(level: number): string {
@@ -23,16 +32,33 @@ export function DanmakuRow({
   ev,
   theme,
   translated,
+  note,
+  onUserClick,
 }: {
   ev: LiveEvent;
   theme: DanmakuTheme;
   translated?: string;
+  note?: string;
+  onUserClick?: (uid: number, username: string) => void;
 }) {
   const tr = translated ? (
     <span className="dm-translated" data-testid="dm-translated">
       {translated}
     </span>
   ) : null;
+  const noteTag = note ? (
+    <span className="dm-note" data-testid="dm-note" title={note}>
+      {note}
+    </span>
+  ) : null;
+  const userProps = (uid: number, username: string) =>
+    onUserClick
+      ? {
+          onClick: () => onUserClick(uid, username),
+          style: { cursor: "pointer" } as React.CSSProperties,
+          title: "点击编辑备注",
+        }
+      : {};
   switch (ev.kind) {
     case "danmaku":
       return (
@@ -50,7 +76,10 @@ export function DanmakuRow({
           {ev.guard_level > 0 && (
             <span className="dm-guard-tag">{guardName(ev.guard_level)}</span>
           )}
-          <span className="dm-username">{ev.username}:</span>
+          {noteTag}
+          <span className="dm-username" {...userProps(ev.uid, ev.username)}>
+            {ev.username}:
+          </span>
           {ev.emoticon ? (
             <img className="dm-emoticon" src={ev.emoticon} alt={ev.text} />
           ) : (
@@ -103,6 +132,8 @@ export default function DanmakuList({
   theme,
   maxRows = 200,
   translations,
+  notes,
+  onUserClick,
 }: DanmakuListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const shown = events.slice(-maxRows);
@@ -125,6 +156,12 @@ export default function DanmakuList({
           translated={
             ev.tid !== undefined ? translations?.[ev.tid] : undefined
           }
+          note={
+            "username" in ev && "uid" in ev
+              ? notes?.[noteKey(ev.uid, ev.username)]
+              : undefined
+          }
+          onUserClick={onUserClick}
         />
       ))}
       <div ref={bottomRef} />

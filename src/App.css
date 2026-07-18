@@ -386,3 +386,12 @@ button.danger {
   opacity: 0.55;
   font-size: 0.85em;
 }
+
+.dm-note {
+  background: #8e24aa;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 4px;
+  font-size: 0.78em;
+}

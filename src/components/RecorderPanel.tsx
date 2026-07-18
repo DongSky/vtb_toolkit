@@ -22,10 +22,15 @@ export default function RecorderPanel() {
   const [active, setActive] = useState<number[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // 多平台 (YouTube/Twitch via yt-dlp)
+  const [platformUrl, setPlatformUrl] = usePersisted("rec.platformUrl", "");
+  const [platformActive, setPlatformActive] = useState<string[]>([]);
 
   const refresh = async () => {
     try {
       setActive(await invoke<number[]>("recorder_status"));
+      const p = await invoke<string[]>("platform_record_status");
+      setPlatformActive(Array.isArray(p) ? p : []);
     } catch {
       /* backend absent in browser dev */
     }
@@ -44,10 +49,34 @@ export default function RecorderPanel() {
       setLog((l) => [...l.slice(-99), line]);
       refresh();
     });
+    const unP = listen<{ id: string; kind: string; message: string }>(
+      "platform_rec://event",
+      (e) => {
+        setLog((l) => [
+          ...l.slice(-99),
+          `[${e.payload.kind}] ${e.payload.id}: ${e.payload.message}`,
+        ]);
+        refresh();
+      },
+    );
     return () => {
       un.then((f) => f());
+      unP.then((f) => f());
     };
   }, []);
+
+  const startPlatform = async () => {
+    setError(null);
+    try {
+      await invoke("platform_record_start", {
+        id: platformUrl,
+        outputDir: outputDir,
+      });
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const start = async () => {
     setError(null);
@@ -128,6 +157,36 @@ export default function RecorderPanel() {
           </li>
         ))}
       </ul>
+      <div className="form-row" data-testid="rec-platform">
+        <input
+          data-testid="rec-platform-url"
+          placeholder="YouTube/Twitch 直播 URL（需安装 yt-dlp）"
+          style={{ flex: 1 }}
+          value={platformUrl}
+          onChange={(e) => setPlatformUrl(e.target.value)}
+        />
+        <button
+          data-testid="rec-platform-start"
+          disabled={!platformUrl.trim() || !outputDir}
+          onClick={startPlatform}
+        >
+          监听录制
+        </button>
+        {platformActive.map((k) => (
+          <span key={k}>
+            {k}
+            <button
+              onClick={() =>
+                invoke("platform_record_stop", { id: k })
+                  .then(refresh)
+                  .catch((e) => setError(String(e)))
+              }
+            >
+              停止
+            </button>
+          </span>
+        ))}
+      </div>
       <div className="form-row" data-testid="rec-retention">
         <span>滚动清理（0=关闭）:</span>
         <label>

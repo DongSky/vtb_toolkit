@@ -37,6 +37,11 @@ export default function DanmakuPanel() {
   const [timerText, setTimerText] = usePersisted("dm.timer_text", "");
   const [timerSecs, setTimerSecs] = usePersisted("dm.timer_secs", "300");
   const [timerRooms, setTimerRooms] = useState<number[]>([]);
+  // 粉丝画像: viewer notes keyed by note_key.
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  // Twitch chat.
+  const [twitchChannel, setTwitchChannel] = usePersisted("dm.twitch", "");
+  const [twitchConnected, setTwitchConnected] = useState<string[]>([]);
 
   const theme = useMemo(
     () => themes.find((t) => t.id === themeId) ?? themes[0],
@@ -74,11 +79,43 @@ export default function DanmakuPanel() {
     invoke<number[]>("danmaku_timer_status")
       .then(setTimerRooms)
       .catch(() => {});
+    invoke<{ uid: number; username: string; note: string }[]>("user_notes_list")
+      .then((list) => {
+        const map: Record<string, string> = {};
+        for (const n of list) {
+          const key = n.uid !== 0 ? `uid:${n.uid}` : `name:${n.username}`;
+          map[key] = n.note;
+        }
+        setNotes(map);
+      })
+      .catch(() => {});
+    invoke<string[]>("twitch_status")
+      .then((v) => setTwitchConnected(Array.isArray(v) ? v : []))
+      .catch(() => {});
     return () => {
       un.then((f) => f());
       unTr.then((f) => f());
     };
   }, []);
+
+  const connectTwitch = async () => {
+    setError(null);
+    try {
+      await invoke("twitch_connect", { channel: twitchChannel });
+      setTwitchConnected(await invoke<string[]>("twitch_status"));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const disconnectTwitch = async (ch: string) => {
+    try {
+      await invoke("twitch_disconnect", { channel: ch });
+      setTwitchConnected(await invoke<string[]>("twitch_status"));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const toggleTranslate = async () => {
     setError(null);
@@ -98,6 +135,23 @@ export default function DanmakuPanel() {
   };
 
   const roomNum = Number(roomId);
+
+  const editNote = async (uid: number, username: string) => {
+    const key = uid !== 0 ? `uid:${uid}` : `name:${username}`;
+    const next = window.prompt(`备注 ${username}`, notes[key] ?? "");
+    if (next === null) return;
+    try {
+      await invoke("user_note_set", { uid, username, note: next });
+      setNotes((prev) => {
+        const copy = { ...prev };
+        if (next.trim()) copy[key] = next.trim();
+        else delete copy[key];
+        return copy;
+      });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const sendDanmaku = async () => {
     setError(null);
@@ -196,6 +250,27 @@ export default function DanmakuPanel() {
         <button data-testid="dm-edit-theme" onClick={() => setEditing(!editing)}>
           {editing ? "关闭编辑器" : "编辑主题"}
         </button>
+      </div>
+      <div className="form-row">
+        <input
+          data-testid="dm-twitch-channel"
+          placeholder="Twitch 频道名"
+          value={twitchChannel}
+          onChange={(e) => setTwitchChannel(e.target.value)}
+        />
+        <button
+          data-testid="dm-twitch-connect"
+          disabled={!twitchChannel.trim()}
+          onClick={connectTwitch}
+        >
+          连接 Twitch
+        </button>
+        {twitchConnected.map((ch) => (
+          <span key={ch}>
+            #{ch}
+            <button onClick={() => disconnectTwitch(ch)}>断开</button>
+          </span>
+        ))}
       </div>
       <div className="form-row">
         <label data-testid="dm-translate-label">
@@ -326,7 +401,13 @@ export default function DanmakuPanel() {
         ))}
       </ul>
       {editing && <ThemeEditor theme={theme} onSave={saveTheme} />}
-      <DanmakuList events={events} theme={theme} translations={translations} />
+      <DanmakuList
+        events={events}
+        theme={theme}
+        translations={translations}
+        notes={notes}
+        onUserClick={editNote}
+      />
     </div>
   );
 }

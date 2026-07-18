@@ -107,3 +107,57 @@ pub async fn clip_export(
         .map_err(|e| e.to_string())?;
     Ok(out.to_string_lossy().into_owned())
 }
+
+/// Export the session's highlights as a CMX3600 EDL next to
+/// `highlights.json`. Premiere/Resolve import it as a cuts-only timeline
+/// of every 高能片段. Returns the EDL path.
+#[tauri::command]
+pub async fn edl_export(dir: String) -> Result<String, String> {
+    let dir = PathBuf::from(dir);
+    let highlights: Vec<Highlight> = std::fs::read_to_string(dir.join("highlights.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    if highlights.is_empty() {
+        return Err("没有可导出的高能片段".into());
+    }
+    // Source file name: same discovery as review_load's video field.
+    let source = dir
+        .parent()
+        .and_then(|p| std::fs::read_dir(p).ok())
+        .and_then(|rd| {
+            let mut media: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            media.sort();
+            media
+                .iter()
+                .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
+                .cloned()
+                .or_else(|| media.into_iter().next())
+        })
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "recording.flv".into());
+
+    let title = dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "session".into());
+    let edl = vtb_highlight::export::edl_from_highlights(
+        &title,
+        &source,
+        &highlights,
+        vtb_highlight::export::DEFAULT_FPS,
+    );
+    let out = dir.join("highlights.edl");
+    std::fs::write(&out, edl).map_err(|e| e.to_string())?;
+    Ok(out.to_string_lossy().into_owned())
+}

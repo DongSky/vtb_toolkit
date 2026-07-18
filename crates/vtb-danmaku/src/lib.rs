@@ -15,6 +15,7 @@ pub mod wbi;
 pub mod pb;
 pub mod managed;
 pub mod send;
+pub mod twitch;
 
 pub use client::{DanmakuClient, DanmakuClientConfig};
 pub use error::DanmakuError;

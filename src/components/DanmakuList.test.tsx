@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import DanmakuList from "./DanmakuList";
 import { BUILTIN_THEMES } from "../themes";
 import type { LiveEvent } from "../types";
@@ -134,5 +134,33 @@ describe("DanmakuList", () => {
       <DanmakuList events={events} theme={theme} translations={{ 42: "x" }} />,
     );
     expect(screen.queryByTestId("dm-translated")).not.toBeInTheDocument();
+  });
+
+  it("renders a viewer note tag and fires onUserClick", () => {
+    const onUserClick = vi.fn();
+    const ev = danmaku("常客发言", { uid: 7, username: "老哥" });
+    render(
+      <DanmakuList
+        events={[ev]}
+        theme={theme}
+        notes={{ "uid:7": "三年舰长" }}
+        onUserClick={onUserClick}
+      />,
+    );
+    expect(screen.getByTestId("dm-note")).toHaveTextContent("三年舰长");
+    fireEvent.click(screen.getByText("老哥:"));
+    expect(onUserClick).toHaveBeenCalledWith(7, "老哥");
+  });
+
+  it("keys anonymous viewers by username", () => {
+    const ev = danmaku("匿名发言", { uid: 0, username: "星***" });
+    render(
+      <DanmakuList
+        events={[ev]}
+        theme={theme}
+        notes={{ "name:星***": "疑似老观众" }}
+      />,
+    );
+    expect(screen.getByTestId("dm-note")).toHaveTextContent("疑似老观众");
   });
 });
