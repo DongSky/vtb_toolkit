@@ -12,7 +12,12 @@ use vtb_recorder::stream::{pick_best, qn, StreamApi};
 
 #[tokio::main]
 async fn main() {
-    let short: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(320);
+    // Arg1 may be a room id OR a path to an existing media file.
+    let arg1 = std::env::args().nth(1).unwrap_or_else(|| "320".into());
+    if std::path::Path::new(&arg1).exists() {
+        return from_file(&arg1).await;
+    }
+    let short: u64 = arg1.parse().unwrap_or(320);
     let secs: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(40);
 
     // 1. Record fresh audio directly (audio-only, faster than full record).
@@ -50,27 +55,83 @@ async fn main() {
     }
 
     // 4. Transcribe.
-    let model = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache/vtb-toolkit/ggml-tiny.bin")).unwrap();
-    if !model.exists() {
-        eprintln!("无模型 {}", model.display());
-        return;
-    }
-    let engine = Arc::new(WhisperEngine::new(&model, None).unwrap());
-    println!("\n=== 转写中 (whisper tiny)… ===");
-    let t0 = Instant::now();
-    let segs = transcribe_buffer(engine, &pcm, StreamingConfig::default()).await;
-    let elapsed = t0.elapsed();
-    println!("转写完成 {} 段, 耗时 {:.1}s (RTF {:.2})", segs.len(), elapsed.as_secs_f64(),
-        elapsed.as_secs_f64() / (pcm.len() as f64 / 16000.0));
-    for s in &segs {
-        println!("  [{:.1}-{:.1}s]{} {}", s.start_ms as f64/1000.0, s.end_ms as f64/1000.0,
-            s.lang.as_deref().map(|l| format!(" ({l})")).unwrap_or_default(), s.text);
+    // Arg 3: comma-separated model names (default "tiny").
+    let models = std::env::args().nth(3).unwrap_or_else(|| "tiny".into());
+    let cache = std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".cache/vtb-toolkit"))
+        .unwrap();
+    for name in models.split(',') {
+        let model = cache.join(format!("ggml-{name}.bin"));
+        if !model.exists() {
+            eprintln!("无模型 {}", model.display());
+            continue;
+        }
+        let engine = Arc::new(WhisperEngine::new(&model, None).unwrap());
+        println!("\n=== 转写中 (whisper {name}) ===");
+        let t0 = Instant::now();
+        let segs = transcribe_buffer(engine, &pcm, StreamingConfig::default()).await;
+        let elapsed = t0.elapsed();
+        println!(
+            "转写 {} 段, 耗时 {:.1}s (RTF {:.2})",
+            segs.len(),
+            elapsed.as_secs_f64(),
+            elapsed.as_secs_f64() / (pcm.len() as f64 / 16000.0)
+        );
+        for s in &segs {
+            println!(
+                "  [{:.1}-{:.1}s]{} {}",
+                s.start_ms as f64 / 1000.0,
+                s.end_ms as f64 / 1000.0,
+                s.lang.as_deref().map(|l| format!(" ({l})")).unwrap_or_default(),
+                s.text
+            );
+        }
+        if segs.is_empty() {
+            println!("⚠️  无转写结果");
+        }
     }
     let _ = Duration::from_secs(0);
+}
 
-    if segs.is_empty() {
-        println!("⚠️  无转写结果");
-    } else if segs.iter().any(|s| !s.text.trim().is_empty()) {
-        println!("✅ ASR 产出非空转写");
+/// File mode: extract audio from an existing recording and run the same
+/// VAD + model-comparison pipeline.
+async fn from_file(path: &str) {
+    let pcm = vtb_asr::audio::extract_audio_ffmpeg(Path::new("ffmpeg"), Path::new(path))
+        .await
+        .expect("extract audio");
+    println!("文件 {} → {:.1}s 音频", path, pcm.len() as f64 / 16000.0);
+    let spans = detect_spans(&pcm, VadConfig::default());
+    println!("VAD 分句 {} 段", spans.len());
+
+    let models = std::env::args().nth(3).unwrap_or_else(|| "tiny".into());
+    let cache = std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".cache/vtb-toolkit"))
+        .unwrap();
+    for name in models.split(',') {
+        let model = cache.join(format!("ggml-{name}.bin"));
+        if !model.exists() {
+            eprintln!("无模型 {}", model.display());
+            continue;
+        }
+        let engine = Arc::new(WhisperEngine::new(&model, None).unwrap());
+        println!("\n=== whisper {name} ===");
+        let t0 = Instant::now();
+        let segs = transcribe_buffer(engine, &pcm, StreamingConfig::default()).await;
+        let elapsed = t0.elapsed();
+        println!(
+            "{} 段, 耗时 {:.1}s (RTF {:.2})",
+            segs.len(),
+            elapsed.as_secs_f64(),
+            elapsed.as_secs_f64() / (pcm.len() as f64 / 16000.0)
+        );
+        for s in &segs {
+            println!(
+                "  [{:.1}-{:.1}s]{} {}",
+                s.start_ms as f64 / 1000.0,
+                s.end_ms as f64 / 1000.0,
+                s.lang.as_deref().map(|l| format!(" ({l})")).unwrap_or_default(),
+                s.text
+            );
+        }
     }
 }

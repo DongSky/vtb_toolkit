@@ -81,32 +81,37 @@ struct DonePayload {
     clips: usize,
 }
 
-/// Shared LLM backend construction (also used by the live subtitle command).
-/// Key resolution order: explicit → env → OS keychain ("llm-api-key").
+/// Shared LLM backend construction (also used by the live subtitle
+/// command). Resolution: explicit options → settings.json["llm"] → env
+/// (OPENAI_BASE_URL/…_API_KEY) → keychain → defaults.
 pub fn build_backend_pub(
-    provider: Option<&str>,
+    app: &AppHandle,
+    provider: Option<String>,
     api_key: Option<String>,
     model: Option<String>,
     base_url: Option<String>,
 ) -> Result<Arc<dyn LlmBackend>, String> {
-    let key = api_key
-        .filter(|k| !k.is_empty())
-        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-        .or_else(|| vtb_account::Secrets::get("llm-api-key").ok().flatten())
-        .ok_or("no LLM API key provided (set one in the panel or keychain)")?;
-    match provider.unwrap_or("anthropic") {
+    let settings = super::config::read_settings(app);
+    let resolved = super::llm::resolve_llm(
+        provider,
+        api_key,
+        model,
+        base_url,
+        &settings["llm"],
+        &|name| std::env::var(name).ok(),
+        vtb_account::Secrets::get("llm-api-key").ok().flatten(),
+    )?;
+    match resolved.provider.as_str() {
         "openai" => Ok(Arc::new(OpenAiCompatBackend::new(
-            base_url.unwrap_or_else(|| "https://api.openai.com/v1".into()),
-            key,
-            model.unwrap_or_else(|| "gpt-4o-mini".into()),
+            resolved
+                .base_url
+                .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+            resolved.api_key,
+            resolved.model,
         ))),
         _ => {
-            let mut b = AnthropicBackend::new(
-                key,
-                model.unwrap_or_else(|| "claude-haiku-4-5".into()),
-            );
-            if let Some(url) = base_url {
+            let mut b = AnthropicBackend::new(resolved.api_key, resolved.model);
+            if let Some(url) = resolved.base_url {
                 b = b.with_base_url(url);
             }
             Ok(Arc::new(b))
@@ -114,9 +119,10 @@ pub fn build_backend_pub(
     }
 }
 
-fn build_backend(o: &OfflineOptions) -> Result<Arc<dyn LlmBackend>, String> {
+fn build_backend(app: &AppHandle, o: &OfflineOptions) -> Result<Arc<dyn LlmBackend>, String> {
     build_backend_pub(
-        o.llm_provider.as_deref(),
+        app,
+        o.llm_provider.clone(),
         o.llm_api_key.clone(),
         o.llm_model.clone(),
         o.llm_base_url.clone(),
@@ -185,13 +191,18 @@ pub async fn offline_process(
 
         let mut job = OfflineJob::new(cfg, engine);
         if options.multimodal {
-            let key = options
-                .llm_api_key
-                .clone()
-                .filter(|k| !k.is_empty())
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                .or_else(|| vtb_account::Secrets::get("llm-api-key").ok().flatten())
-                .ok_or("多模态复核需要 Anthropic API key")?;
+            let settings = super::config::read_settings(&app);
+            let key = super::llm::resolve_llm(
+                Some("anthropic".into()),
+                options.llm_api_key.clone(),
+                None,
+                None,
+                &settings["llm"],
+                &|name| std::env::var(name).ok(),
+                vtb_account::Secrets::get("llm-api-key").ok().flatten(),
+            )
+            .map_err(|_| "多模态复核需要 Anthropic API key")?
+            .api_key;
             let judge = vtb_highlight::multimodal::AnthropicJudge::new(
                 key,
                 options
@@ -202,7 +213,7 @@ pub async fn offline_process(
             job = job.with_judge(Arc::new(judge));
         }
         if options.translate {
-            let backend = build_backend(&options)?;
+            let backend = build_backend(&app, &options)?;
             let profile = match &options.profile_path {
                 Some(p) => StreamerProfile::load(std::path::Path::new(p))
                     .map_err(|e| e.to_string())?,

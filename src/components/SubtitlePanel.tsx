@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
 import ModelPicker from "./ModelPicker";
+import LlmSettings, { useLlmSettings } from "./LlmSettings";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -17,26 +18,10 @@ export default function SubtitlePanel() {
   const [roomId, setRoomId] = usePersisted("sub.room", "");
   const [modelPath, setModelPath] = usePersisted("sub.modelPath", "");
   const [translate, setTranslate] = usePersisted("sub.translate", false);
-  const [apiKey, setApiKey] = useState("");
+  const { llm } = useLlmSettings();
   const [running, setRunning] = useState(false);
   const [segments, setSegments] = useState<SubtitleSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
-
-  const [keySaved, setKeySaved] = useState(false);
-  useEffect(() => {
-    Promise.resolve(invoke<boolean>("secret_exists", { name: "llm-api-key" }))
-      .then((v) => setKeySaved(Boolean(v)))
-      .catch(() => {});
-  }, []);
-  const saveKeyToKeychain = async () => {
-    if (!apiKey) return;
-    try {
-      await invoke("secret_set", { name: "llm-api-key", value: apiKey });
-      setKeySaved(true);
-    } catch {
-      /* keychain unavailable */
-    }
-  };
 
 
   useEffect(() => {
@@ -56,7 +41,9 @@ export default function SubtitlePanel() {
           room_id: Number(roomId),
           model_path: modelPath,
           translate,
-          llm_api_key: apiKey || undefined,
+          llm_provider: llm.provider || undefined,
+          llm_base_url: llm.base_url || undefined,
+          llm_model: llm.model || undefined,
         },
       });
       setRunning(true);
@@ -100,16 +87,7 @@ export default function SubtitlePanel() {
           />
           启用同传翻译
         </label>
-        {translate && (
-          <input
-            data-testid="sub-apikey"
-            type="password"
-            placeholder={keySaved ? "已保存到钥匙串（留空则使用）" : "LLM API Key（自动存入钥匙串）"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onBlur={saveKeyToKeychain}
-          />
-        )}
+        {translate && <LlmSettings />}
         {running ? (
           <button data-testid="sub-stop" onClick={stop}>
             停止

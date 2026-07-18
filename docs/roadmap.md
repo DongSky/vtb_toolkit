@@ -134,3 +134,28 @@
 - **Phase 4(平台与生态)**:Platform trait+yt-dlp 后端(YouTube/Twitch,graceful 降级)+platform_probe、本地 REST API(/api/status)、biliup 投稿(复盘页一键投稿)、脚本钩子插件(事件 JSON→stdin,30s 超时)
 
 测试:248 Rust + 48 前端 = 296 全绿;应用启动验证通过。
+
+---
+
+## 二次差距盘点(2026-07-18,四个 Phase 完成后)
+
+### 仍缺失的功能(vs 竞品)
+
+| 功能 | 竞品 | 差距说明 | 建议优先级 |
+|---|---|---|---|
+| 弹幕发送/场控 | DDTV、神奇弹幕(已停更) | 需要 bili_jct csrf 发送接口;可做答谢/定时弹幕 | P1 |
+| FLV tag 级时间戳修复 | 录播姬/blrec 核心卖点 | 我们依赖 ffmpeg copy,B站流时间戳跳变时切片/字幕可能错位;需 FLV 解析器逐 tag 修复 | P1 |
+| 弹幕自动翻译显示 | blivechat(译日语给海外观众) | 翻译管线只接了语音,弹幕文本翻译未接到 overlay | P1 |
+| 流参数变化自动分割/备线切换 | blrec/DDTV | 长时间录制稳定性场景 | P2 |
+| 旧录播滚动清理 | blrec | 现在只有低磁盘停录,无自动清理 | P2 |
+| 词云可视化 | LAPLACE | word_freq 数据已有,缺前端渲染 | P2 |
+| 切片内置预览播放器 | 剪辑类工具 | 复盘页只能导出后外部播放 | P2 |
+| 用户备注/粉丝画像 | LAPLACE | 认老观众 | P3 |
+| 剪辑工程导出(Premiere XML/EDL) | AI clipping 商业品 | 高能点导出为剪辑软件标记 | P3 |
+| YouTube/Twitch 弹幕(聊天) | Holodex | 平台 trait 只覆盖了取流,聊天协议未接 | P3 |
+| 多平台录制 UI | - | yt-dlp 后端与 probe 已有,录制界面仍是 B站 room_id 流 | P3 |
+| 自动更新/安装包分发/签名 | 成熟桌面产品 | 工程化发布 | P3 |
+| Windows/Linux 全功能验证 | - | keyring 跨平台但 TTS(say)仅 macOS;磁盘检测非 unix 返回 MAX | P3 |
+
+### 本轮补强(响应用户反馈)
+- 翻译/AI 接口全链路可配置:provider(Anthropic/OpenAI兼容)+ API Base + 模型 + Key(钥匙串),解析优先级 显式→settings→环境变量→钥匙串→默认;修复实时字幕命令不传 base_url 的缺陷

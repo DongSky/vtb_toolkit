@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
 import ModelPicker from "./ModelPicker";
+import LlmSettings, { useLlmSettings } from "./LlmSettings";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { JobDonePayload, JobProgressPayload } from "../types";
@@ -14,27 +15,11 @@ export default function OfflinePanel() {
   const [burnSubs, setBurnSubs] = usePersisted("off.burnSubs", false);
   const [multimodal, setMultimodal] = usePersisted("off.multimodal", false);
   const [songClips, setSongClips] = usePersisted("off.songClips", false);
-  const [apiKey, setApiKey] = useState("");
+  const { llm } = useLlmSettings();
   const [progress, setProgress] = useState<JobProgressPayload | null>(null);
   const [done, setDone] = useState<JobDonePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-
-  const [keySaved, setKeySaved] = useState(false);
-  useEffect(() => {
-    Promise.resolve(invoke<boolean>("secret_exists", { name: "llm-api-key" }))
-      .then((v) => setKeySaved(Boolean(v)))
-      .catch(() => {});
-  }, []);
-  const saveKeyToKeychain = async () => {
-    if (!apiKey) return;
-    try {
-      await invoke("secret_set", { name: "llm-api-key", value: apiKey });
-      setKeySaved(true);
-    } catch {
-      /* keychain unavailable */
-    }
-  };
 
 
   useEffect(() => {
@@ -68,7 +53,9 @@ export default function OfflinePanel() {
           burn_subtitles: burnSubs,
           multimodal,
           song_clips: songClips,
-          llm_api_key: apiKey || undefined,
+          llm_provider: llm.provider || undefined,
+          llm_base_url: llm.base_url || undefined,
+          llm_model: llm.model || undefined,
         },
       });
     } catch (e) {
@@ -142,16 +129,7 @@ export default function OfflinePanel() {
           />
           歌切模式（检测歌回中的完整歌曲并单独切出）
         </label>
-        {translate && (
-          <input
-            data-testid="off-apikey"
-            type="password"
-            placeholder={keySaved ? "已保存到钥匙串（留空则使用）" : "LLM API Key（自动存入钥匙串）"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onBlur={saveKeyToKeychain}
-          />
-        )}
+        {(translate || multimodal) && <LlmSettings />}
         <button
           data-testid="off-start"
           disabled={running || !input || !outputDir || !modelPath}

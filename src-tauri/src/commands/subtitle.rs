@@ -32,6 +32,8 @@ pub struct LiveSubtitleOptions {
     #[serde(default)]
     pub llm_model: Option<String>,
     #[serde(default)]
+    pub llm_base_url: Option<String>,
+    #[serde(default)]
     pub profile_path: Option<String>,
 }
 
@@ -94,10 +96,11 @@ pub async fn live_subtitle_start(
         // Optional translator.
         let translator = if options.translate {
             let backend = super::pipeline::build_backend_pub(
-                options.llm_provider.as_deref(),
+                &app,
+                options.llm_provider.clone(),
                 options.llm_api_key.clone(),
                 options.llm_model.clone(),
-                None,
+                options.llm_base_url.clone(),
             )?;
             let profile = match &options.profile_path {
                 Some(p) => StreamerProfile::load(std::path::Path::new(p))

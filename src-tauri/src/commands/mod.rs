@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod danmaku;
 pub mod hooks;
+pub mod llm;
 pub mod overlay;
 pub mod recorder;
 pub mod pipeline;
