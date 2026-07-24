@@ -12,6 +12,25 @@ dist
 dist-ssr
 *.local
 
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.npmrc
+.cargo/credentials
+.cargo/credentials.toml
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+
+# Tauri signing material
+*.sig
+src-tauri/gen/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -29,3 +48,7 @@ target/
 # recordings / models (large artifacts)
 recordings/
 models/
+
+# Accidental ffmpeg pseudo-output files
+pipe:*
+-

@@ -189,3 +189,15 @@
 - YouTube 聊天(InnerTube 轮询协议,工作量大,列为后续)
 
 测试基线:cargo workspace 全绿(vtb-recorder 的 stall 重启测试在并行负载下偶发 flaky,单独重跑通过)+ 前端 64 用例全绿。
+
+---
+
+## Phase 5 — 创作者工作流打通(2026-07-23 完成)
+
+基于浅野ひかり需求访谈(时间戳 / 剪辑打通 / 封面 idea)。计划与完成状态详见 `docs/phase5-creator-workflow-plan.md`:
+
+- **M5.1 直播打点系统**:墙钟时间基准(读取时以 meta.json started_at 对齐,与 danmaku.jsonl 同约定)、实时告警落盘 auto 标记、手动打点三入口(面板按钮 / 全局快捷键 ⌘⇧M / 房管弹幕口令「打点 [备注]」)、离线管线手动标记强先验(未覆盖自动补候选)、复盘页时间轴叠加(打点+SC+舰长+开播)与点击跳转、timestamps.txt 导出(B站评论格式);`diag_markers`
+- **M5.2 剪辑打通**:FCPXML 导出(整段录播+帧对齐 marker,达芬奇/FCP 直接导入)、剪映草稿导出(实验性,pyJianYingDraft 5.x 结构,微秒时间基,待本机剪映实测)、素材包一键导出(切片+字幕+弹幕XML+时间戳清单+封面帧)、720p 代理副本
+- **M5.3 封面辅助**:top 高能密集抽帧(1280px)、LLM 封面创意(标题文案/构图/配色/image_prompt → cover/ideas.md)、gpt-image-2 生成(Base URL/Key/模型/尺寸全部手动可配;参考图走 images/edits multipart,补充文本附加进 prompt;经 yunwu.ai 中转实测生成成功);`diag_cover`
+
+测试基线:Rust workspace 全绿 + 前端 74 用例全绿。

@@ -42,6 +42,10 @@ export default function DanmakuPanel() {
   // Twitch chat.
   const [twitchChannel, setTwitchChannel] = usePersisted("dm.twitch", "");
   const [twitchConnected, setTwitchConnected] = useState<string[]>([]);
+  // 打点: rooms with an active recording session + transient toast.
+  const [markerRooms, setMarkerRooms] = useState<number[]>([]);
+  const [markerToast, setMarkerToast] = useState<string | null>(null);
+  const [markerNote, setMarkerNote] = useState("");
 
   const theme = useMemo(
     () => themes.find((t) => t.id === themeId) ?? themes[0],
@@ -92,11 +96,56 @@ export default function DanmakuPanel() {
     invoke<string[]>("twitch_status")
       .then((v) => setTwitchConnected(Array.isArray(v) ? v : []))
       .catch(() => {});
+    invoke<number[]>("marker_rooms")
+      .then((v) => setMarkerRooms(Array.isArray(v) ? v : []))
+      .catch(() => {});
+    // Recording start/stop changes which rooms accept markers.
+    const unRec = listen("recorder://event", () => {
+      invoke<number[]>("marker_rooms")
+        .then((v) => setMarkerRooms(Array.isArray(v) ? v : []))
+        .catch(() => {});
+    });
+    // 打点 toast: any marker (hotkey/button/口令/auto alert) flashes here.
+    const unMarker = listen<{ room_id: number; kind: string; note: string | null }>(
+      "marker://added",
+      (e) => {
+        const p = e.payload;
+        setMarkerToast(
+          `已打点 房间${p.room_id}${p.note ? `：${p.note}` : ""}${p.kind === "auto" ? "（自动）" : ""}`,
+        );
+        setTimeout(() => setMarkerToast(null), 4000);
+      },
+    );
+    const unAlert = listen<{ room_id: number; reason: string }>(
+      "highlight://alert",
+      (e) => {
+        setMarkerToast(`疑似高能 房间${e.payload.room_id}：${e.payload.reason}`);
+        setTimeout(() => setMarkerToast(null), 6000);
+      },
+    );
     return () => {
       un.then((f) => f());
       unTr.then((f) => f());
+      unMarker.then((f) => f());
+      unAlert.then((f) => f());
+      unRec.then((f) => f());
     };
   }, []);
+
+  const addMarker = async () => {
+    setError(null);
+    try {
+      // Prefer the entered room; fall back to the sole recording room.
+      const target = markerRooms.includes(roomNum) ? roomNum : markerRooms[0];
+      await invoke("marker_add", {
+        roomId: target,
+        note: markerNote.trim() || null,
+      });
+      setMarkerNote("");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const connectTwitch = async () => {
     setError(null);
@@ -294,6 +343,34 @@ export default function DanmakuPanel() {
         <button data-testid="dm-ctrl-toggle" onClick={() => setShowCtrl(!showCtrl)}>
           {showCtrl ? "收起场控" : "场控"}
         </button>
+      </div>
+      <div className="form-row">
+        <input
+          data-testid="dm-marker-note"
+          placeholder="打点备注（可空）"
+          value={markerNote}
+          maxLength={40}
+          onChange={(e) => setMarkerNote(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && markerRooms.length > 0) addMarker();
+          }}
+        />
+        <button
+          data-testid="dm-marker-add"
+          disabled={markerRooms.length === 0}
+          onClick={addMarker}
+          title="全局快捷键 Cmd/Ctrl+Shift+M；房管弹幕发「打点 备注」也可触发"
+        >
+          打点 ⏱
+        </button>
+        {markerRooms.length === 0 && (
+          <span className="hint">录制开始后可打点（快捷键 ⌘⇧M）</span>
+        )}
+        {markerToast && (
+          <span className="dm-marker-toast" data-testid="dm-marker-toast">
+            {markerToast}
+          </span>
+        )}
       </div>
       {showCtrl && (
         <div className="dm-ctrl" data-testid="dm-ctrl">

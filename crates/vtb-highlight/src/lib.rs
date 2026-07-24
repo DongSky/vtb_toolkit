@@ -10,6 +10,9 @@
 //! Fusion produces scored windows; adjacent hot windows merge into
 //! [`vtb_common::Highlight`] items ready for one-click clipping.
 
+// The 剪映 draft template in `jianying` is one deeply nested json! literal.
+#![recursion_limit = "256"]
+
 pub mod error;
 pub mod signals;
 pub mod fusion;
@@ -18,6 +21,8 @@ pub mod multimodal;
 pub mod realtime;
 pub mod music;
 pub mod export;
+pub mod jianying;
+pub mod cover;
 
 pub use error::HighlightError;
 pub use fusion::{FusionConfig, detect_highlights};

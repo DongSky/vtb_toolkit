@@ -45,6 +45,32 @@ cargo test -p vtb-asr --test whisper_integration -- --ignored    # 下载 tiny �
 
 whisper 模型：从 [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp) 下载 `ggml-*.bin`（建议 `small`/`medium` 平衡中英日效果），在“离线处理”面板填入路径。
 
+## 构建安装包
+
+构建前请安装 Rust ≥1.85、Node.js ≥20，以及 [Tauri 2 对应平台的系统依赖](https://v2.tauri.app/start/prerequisites/)。macOS 最低支持 10.15。脚本会用 `npm ci` 安装锁定的前端依赖，并生成当前平台的安装包：
+
+```bash
+# Linux（deb + AppImage）
+./scripts/build-linux.sh
+
+# macOS（app + dmg）
+./scripts/build-macos.sh
+```
+
+```powershell
+# Windows PowerShell（NSIS exe + MSI）
+pwsh -File scripts/build-windows.ps1
+```
+
+脚本会先清理上一次的 `target/release/bundle/`，新产物也位于该目录。推送到 `main`、提交 Pull Request 或手动运行 `Build` workflow 时，GitHub Actions 会先扫描凭据泄露，再并行构建 Windows、macOS 和 Linux 版本；安装包可从该次 workflow 的 Artifacts 下载。
+
+## 凭据安全
+
+- 不要提交 `.env`、私钥、签名证书或本地包管理器凭据；这些文件已由 `.gitignore` 排除。
+- B 站登录态和持久化的 LLM API Key 使用系统钥匙串（macOS Keychain、Windows Credential Manager、Linux Secret Service）。
+- 图像生成 API Key 只保存在应用当前会话内存中。
+- CI 会使用 Gitleaks 扫描完整 Git 历史，防止凭据随提交进入仓库。
+
 ## 说明与合规
 
 - 弹幕匿名连接时 B 站会对用户名打码（uid=0）；完整信息需自行提供登录 Cookie（本地保存，不上传）。
@@ -53,4 +79,5 @@ whisper 模型：从 [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/wh
 
 ## 文档
 
+- [已有功能总览](docs/features.md) — 当前可用能力、完整工作流、输出文件与已知限制
 - [需求文档](docs/requirements.md) — 功能定义、竞品调研、brainstorm

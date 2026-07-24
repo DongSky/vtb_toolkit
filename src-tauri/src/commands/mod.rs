@@ -1,12 +1,15 @@
 pub mod asr_models;
 pub mod auth;
 pub mod config;
+pub mod cover;
 pub mod danmaku;
 pub mod danmaku_send;
 pub mod danmaku_translate;
+pub mod editor;
 pub mod hooks;
 pub mod hotwords;
 pub mod llm;
+pub mod markers;
 pub mod overlay;
 pub mod platform_rec;
 pub mod recorder;

@@ -131,4 +131,154 @@ describe("ReviewPanel", () => {
       ),
     );
   });
+
+  it("renders 打点 + SC timeline entries and exports timestamps", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "config_load") return Promise.resolve({});
+      if (cmd === "review_load")
+        return Promise.resolve({
+          signals: {
+            window_ms: 10000,
+            total_ms: 60000,
+            density: [1, 5, 2],
+            keyword: null,
+            gift: null,
+            audio: null,
+          },
+          highlights: [],
+          clips: [],
+          video: null,
+        });
+      if (cmd === "marker_timeline")
+        return Promise.resolve({
+          markers: [
+            { at_ms: 15000, kind: "manual", source: "hotkey", note: "名场面" },
+            { at_ms: 30000, kind: "auto", source: "realtime", note: "弹幕爆发" },
+          ],
+          events: [
+            { at_ms: 5000, kind: "super_chat", label: "SC ¥30 观众A: 加油" },
+          ],
+        });
+      if (cmd === "timestamps_export")
+        return Promise.resolve("/x/out/timestamps.txt");
+      return Promise.resolve(null);
+    });
+    render(<ReviewPanel />);
+    fireEvent.change(screen.getByTestId("review-dir"), {
+      target: { value: "/x/out" },
+    });
+    fireEvent.click(screen.getByTestId("review-load"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("review-markers")).toBeInTheDocument(),
+    );
+    const list = screen.getByTestId("review-markers").textContent!;
+    expect(list).toContain("名场面");
+    expect(list).toContain("SC ¥30");
+    // Sorted by time: SC (5s) before manual marker (15s).
+    expect(list.indexOf("SC ¥30")).toBeLessThan(list.indexOf("名场面"));
+
+    fireEvent.click(screen.getByTestId("review-ts-export"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-export-msg")).toHaveTextContent(
+        "时间戳清单已导出",
+      ),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("timestamps_export", {
+      dir: "/x/out",
+    });
+  });
+
+  it("exports editor projects (FCPXML / 剪映 / 素材包)", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "config_load") return Promise.resolve({});
+      if (cmd === "review_load")
+        return Promise.resolve({
+          signals: {
+            window_ms: 10000,
+            total_ms: 60000,
+            density: [1, 5, 2],
+            keyword: null,
+            gift: null,
+            audio: null,
+          },
+          highlights: [
+            {
+              start_ms: 10000,
+              end_ms: 20000,
+              score: 0.9,
+              reason: "峰值",
+              title: "名场面",
+            },
+          ],
+          clips: [],
+          video: "/x/rec.flv",
+        });
+      if (cmd === "fcpxml_export") return Promise.resolve("/x/out/highlights.fcpxml");
+      if (cmd === "jianying_export") return Promise.resolve("/x/out/jianying/s");
+      if (cmd === "asset_bundle_export")
+        return Promise.resolve({ dir: "/x/out/素材包", files: ["a", "b"] });
+      return Promise.resolve(null);
+    });
+    render(<ReviewPanel />);
+    fireEvent.change(screen.getByTestId("review-dir"), {
+      target: { value: "/x/out" },
+    });
+    fireEvent.click(screen.getByTestId("review-load"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-fcpxml-export")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("review-fcpxml-export"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-export-msg")).toHaveTextContent(
+        "FCPXML 已导出",
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("review-jianying-export"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-export-msg")).toHaveTextContent(
+        "剪映草稿已导出",
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("review-bundle-export"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-export-msg")).toHaveTextContent(
+        "素材包已导出 (2 个文件)",
+      ),
+    );
+  });
+
+  it("review loads fine when marker timeline is unavailable", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "config_load") return Promise.resolve({});
+      if (cmd === "review_load")
+        return Promise.resolve({
+          signals: {
+            window_ms: 10000,
+            total_ms: 60000,
+            density: [1, 2],
+            keyword: null,
+            gift: null,
+            audio: null,
+          },
+          highlights: [],
+          clips: [],
+          video: null,
+        });
+      if (cmd === "marker_timeline") return Promise.reject("无会话");
+      return Promise.resolve(null);
+    });
+    render(<ReviewPanel />);
+    fireEvent.change(screen.getByTestId("review-dir"), {
+      target: { value: "/x/out" },
+    });
+    fireEvent.click(screen.getByTestId("review-load"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-canvas")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("review-markers")).not.toBeInTheDocument();
+  });
 });

@@ -17,6 +17,33 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // 打点全局快捷键: works while the app is in the background (the
+        // streamer is in OBS/game, the clipper in their editor).
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts(["CmdOrCtrl+Shift+M"])
+                .expect("valid marker shortcut")
+                .with_handler(|app, _shortcut, event| {
+                    use tauri::Manager;
+                    if event.state() != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
+                    let state = app.state::<AppState>();
+                    let result = commands::markers::sole_active_room(&state.marker_dirs)
+                        .and_then(|room_id| {
+                            commands::markers::add_marker(
+                                app,
+                                &state.marker_dirs,
+                                room_id,
+                                vtb_pipeline::markers::Marker::manual("hotkey", None),
+                            )
+                        });
+                    if let Err(e) = result {
+                        tracing::info!("hotkey marker skipped: {e}");
+                    }
+                })
+                .build(),
+        )
         .manage({
             let state = AppState::default();
             // Restore login from the OS keychain at startup.
@@ -44,6 +71,18 @@ pub fn run() {
             commands::review::review_load,
             commands::review::clip_export,
             commands::review::edl_export,
+            commands::markers::marker_add,
+            commands::markers::marker_rooms,
+            commands::markers::marker_timeline,
+            commands::markers::timestamps_export,
+            commands::editor::fcpxml_export,
+            commands::editor::jianying_export,
+            commands::editor::asset_bundle_export,
+            commands::editor::proxy_generate,
+            commands::cover::cover_extract_frames,
+            commands::cover::cover_ideas,
+            commands::cover::cover_generate,
+            commands::cover::cover_list,
             commands::stats::stats_report,
             commands::stats::stats_export,
             commands::stats::user_note_set,

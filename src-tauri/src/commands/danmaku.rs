@@ -107,6 +107,7 @@ pub async fn danmaku_connect(
         .clone();
     let tts_enabled = state.tts_enabled.clone();
     let tts_paid_only = state.tts_paid_only.clone();
+    let marker_dirs = state.marker_dirs.clone();
     let pump = tokio::spawn(async move {
         // Realtime highlight detection over the live event stream.
         let mut detector = vtb_highlight::realtime::RealtimeDetector::new(
@@ -118,16 +119,57 @@ pub async fn danmaku_connect(
                 ManagedEvent::Live(live) => {
                     let offset = started.elapsed().as_millis() as u64;
                     if let Some(alert) = detector.on_event(offset, &live) {
-                        let _ = app2.emit("highlight://alert", &alert);
+                        let reason = format!(
+                            "{}（弹幕{}条 z={:.1}）",
+                            alert.reason, alert.danmaku_count, alert.z
+                        );
+                        let _ = app2.emit(
+                            "highlight://alert",
+                            serde_json::json!({
+                                "room_id": room_id,
+                                "reason": reason,
+                                "z": alert.z,
+                                "danmaku_count": alert.danmaku_count,
+                            }),
+                        );
+                        // 打点: persist as an auto marker when this room is
+                        // being recorded. Wall clock, not the pump-local
+                        // offset — the pump may have started long after the
+                        // recording, so only created_at aligns with it.
+                        if let Err(e) = super::markers::add_marker(
+                            &app2,
+                            &marker_dirs,
+                            room_id,
+                            vtb_pipeline::markers::Marker::auto(reason.clone()),
+                        ) {
+                            tracing::debug!("auto marker skipped: {e}");
+                        }
                         super::recorder::push_notify(
                             &notifier,
                             vtb_notify::NotifyKind::Highlight,
                             format!("房间 {room_id} 疑似高能时刻"),
-                            format!(
-                                "{}（弹幕{}条 z={:.1}）",
-                                alert.reason, alert.danmaku_count, alert.z
-                            ),
+                            reason,
                         );
+                    }
+                    // 打点弹幕口令: 房管/主播发 "打点 [备注]" 记一个手动
+                    // 标记（观众刷屏不触发）。
+                    if let vtb_common::LiveEvent::Danmaku(d) = &live {
+                        if d.is_admin {
+                            if let Some(note) = super::markers::danmaku_marker_note(&d.text) {
+                                let marker = vtb_pipeline::markers::Marker::manual(
+                                    "danmaku",
+                                    note.or_else(|| Some(format!("{} 打点", d.username))),
+                                );
+                                if let Err(e) = super::markers::add_marker(
+                                    &app2,
+                                    &marker_dirs,
+                                    room_id,
+                                    marker,
+                                ) {
+                                    tracing::debug!("danmaku marker skipped: {e}");
+                                }
+                            }
+                        }
                     }
                     // TTS (serial queue; try_send drops when busy).
                     if tts_enabled.load(std::sync::atomic::Ordering::Relaxed) {

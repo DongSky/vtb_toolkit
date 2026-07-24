@@ -323,6 +323,7 @@ pub async fn recorder_start(
     let hook_settings = super::config::read_settings(&app);
     let retention = load_retention(&hook_settings);
     let output_root = PathBuf::from(&options.output_dir);
+    let marker_dirs = state.marker_dirs.clone();
     tokio::spawn(async move {
         let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
@@ -352,6 +353,12 @@ pub async fn recorder_start(
                     }
                     danmaku_log =
                         start_danmaku_log(room_id, &output_dir, creds.clone(), stats_db.clone());
+                    // 打点: this session dir is now the marker target for
+                    // the room (hotkey / button / auto alerts append here).
+                    marker_dirs
+                        .lock()
+                        .unwrap()
+                        .insert(room_id, output_dir.clone());
                     push_notify(
                         &notifier,
                         vtb_notify::NotifyKind::RecordingStarted,
@@ -375,6 +382,7 @@ pub async fn recorder_start(
                     if let Some(h) = danmaku_log.take() {
                         h.stop().await;
                     }
+                    marker_dirs.lock().unwrap().remove(&room_id);
                     // FLV tag-level timestamp repair (对标录播姬): fix
                     // server-splice jumps so cutting/subtitles stay aligned.
                     // Clean files are left untouched.
@@ -445,6 +453,7 @@ pub async fn recorder_start(
         if let Some(h) = danmaku_log.take() {
             h.stop().await;
         }
+        marker_dirs.lock().unwrap().remove(&room_id);
     });
 
     state.recorders.lock().unwrap().insert(

@@ -5,6 +5,7 @@ use crate::danmaku_log;
 use crate::danmaku_xml;
 use crate::energy::rms_series;
 use crate::error::{PipelineError, Result};
+use crate::markers;
 use crate::subtitle;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,9 @@ pub struct JobOutput {
     /// Per-window signal curves (高能进度条 data).
     #[serde(default)]
     pub signals_json: Option<PathBuf>,
+    /// Timestamp list (打点+高能, B站评论格式), when a marker log existed.
+    #[serde(default)]
+    pub timestamps_txt: Option<PathBuf>,
     /// 歌切 detected song segments.
     #[serde(default)]
     pub songs: Vec<vtb_highlight::music::MusicSegment>,
@@ -289,6 +293,33 @@ impl OfflineJob {
 
             out.highlights = detect_highlights(&signals, &self.config.fusion, total_ms);
 
+            // 打点 (markers): manual points are a strong prior — boost
+            // covered highlights, promote uncovered ones to candidates
+            // (before the judge so promoted candidates get AI titles too).
+            // The marker log lives next to the danmaku log in the session
+            // directory the recorder produced.
+            let mut marker_offsets = Vec::new();
+            if let (Some(log), Some(start)) =
+                (&self.config.danmaku_log, self.config.session_start)
+            {
+                if let Some(session_dir) = log.parent() {
+                    match markers::read_markers(session_dir) {
+                        Ok(ms) if !ms.is_empty() => {
+                            marker_offsets = markers::to_offsets(&ms, start);
+                            markers::merge_marker_highlights(
+                                &mut out.highlights,
+                                &marker_offsets,
+                                15_000,
+                                15_000,
+                                total_ms,
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("marker log read failed: {e}"),
+                    }
+                }
+            }
+
             // Optional multimodal rescoring: sample frames from each
             // candidate, ask a vision model for a refined score + title.
             if let Some(judge) = &self.judge {
@@ -330,6 +361,17 @@ impl OfflineJob {
 
             let hl_json = self.config.output_dir.join("highlights.json");
             std::fs::write(&hl_json, serde_json::to_string_pretty(&out.highlights)?)?;
+
+            // Timestamp list (B站评论/简介格式): 打点 + 高能 on one shared
+            // timeline. Written after the judge so AI titles are included.
+            if !marker_offsets.is_empty() || !out.highlights.is_empty() {
+                let list = markers::timestamp_list(&marker_offsets, &out.highlights);
+                let ts_path = self.config.output_dir.join("timestamps.txt");
+                match std::fs::write(&ts_path, list) {
+                    Ok(()) => out.timestamps_txt = Some(ts_path),
+                    Err(e) => tracing::warn!("timestamp list write failed: {e}"),
+                }
+            }
 
             // Per-window signal curves for the 高能进度条 review UI.
             let curve = serde_json::json!({

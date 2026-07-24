@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { usePersisted } from "../hooks/usePersisted";
 import WordCloud from "./WordCloud";
+import CoverPanel from "./CoverPanel";
 
 interface Curve {
   window_ms: number;
@@ -27,6 +28,24 @@ interface ReviewData {
   video: string | null;
 }
 
+interface TimelineMarker {
+  at_ms: number;
+  kind: "auto" | "manual";
+  source: string;
+  note: string | null;
+}
+
+interface TimelineEvent {
+  at_ms: number;
+  kind: string;
+  label: string;
+}
+
+interface TimelineData {
+  markers: TimelineMarker[];
+  events: TimelineEvent[];
+}
+
 function fmt(ms: number): string {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -50,6 +69,7 @@ export default function ReviewPanel() {
   const [reportMsg, setReportMsg] = useState<string | null>(null);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [timeline, setTimeline] = useState<TimelineData | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const dragStart = useRef<number | null>(null);
@@ -68,6 +88,11 @@ export default function ReviewPanel() {
         );
       } catch {
         setReport(null);
+      }
+      try {
+        setTimeline(await invoke<TimelineData>("marker_timeline", { dir }));
+      } catch {
+        setTimeline(null);
       }
     } catch (e) {
       setError(String(e));
@@ -131,6 +156,34 @@ export default function ReviewPanel() {
     drawCurve(norm(curve.density), "#e53935"); // 弹幕密度: 红
     drawCurve(norm(curve.audio), "#1e88e5"); // 音频能量: 蓝
 
+    // 打点 + SC/舰长/开播 tick marks (full-height thin lines + top dots).
+    const drawTick = (ms: number, color: string) => {
+      const x = (ms / curve.total_ms) * W;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, 5, 3, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (const ev of timeline?.events ?? []) {
+      drawTick(
+        ev.at_ms,
+        ev.kind === "super_chat"
+          ? "#fdd835" // SC: 黄
+          : ev.kind === "guard_buy"
+            ? "#8e24aa" // 舰长: 紫
+            : "#9e9e9e", // 开播/下播: 灰
+      );
+    }
+    for (const m of timeline?.markers ?? []) {
+      drawTick(m.at_ms, m.kind === "manual" ? "#00c853" : "#ff8f00"); // 手动: 绿, 自动: 橙
+    }
+
     // Selection overlay.
     if (sel) {
       ctx.fillStyle = "rgba(94,156,230,0.3)";
@@ -138,7 +191,7 @@ export default function ReviewPanel() {
       const x1 = (sel.end / curve.total_ms) * W;
       ctx.fillRect(Math.min(x0, x1), 0, Math.abs(x1 - x0), H);
     }
-  }, [data, sel]);
+  }, [data, sel, timeline]);
 
   const posFromEvent = (e: React.MouseEvent): number | null => {
     const canvas = canvasRef.current;
@@ -211,7 +264,8 @@ export default function ReviewPanel() {
       {data?.signals && (
         <>
           <p className="login-note">
-            红=弹幕密度 蓝=音频能量 橙色块=检出高能片段。点击查看时间点，拖选后可导出切片。
+            红=弹幕密度 蓝=音频能量 橙色块=检出高能片段 绿线=手动打点 橙线=自动打点
+            黄线=SC 紫线=舰长。点击查看时间点，拖选后可导出切片。
           </p>
           <canvas
             ref={canvasRef}
@@ -259,6 +313,22 @@ export default function ReviewPanel() {
                   ? "关闭预览"
                   : "预览录播"}
               </button>
+              <button
+                data-testid="review-proxy"
+                onClick={async () => {
+                  setExportMsg("代理副本生成中（重编码，需要一些时间）…");
+                  try {
+                    const out = await invoke<string>("proxy_generate", {
+                      input: data.video,
+                    });
+                    setExportMsg(`代理副本已生成: ${out}`);
+                  } catch (e) {
+                    setExportMsg(`代理生成失败: ${e}`);
+                  }
+                }}
+              >
+                生成 720p 代理副本
+              </button>
             </div>
           )}
           {preview && (
@@ -271,20 +341,84 @@ export default function ReviewPanel() {
             />
           )}
           <h3>高能片段（{data.highlights.length}）</h3>
-          {data.highlights.length > 0 && (
-            <button
-              data-testid="review-edl-export"
-              onClick={async () => {
-                try {
-                  const out = await invoke<string>("edl_export", { dir });
-                  setExportMsg(`EDL 已导出: ${out}`);
-                } catch (e) {
-                  setExportMsg(`EDL 导出失败: ${e}`);
-                }
-              }}
-            >
-              导出剪辑工程 (EDL)
-            </button>
+          {(data.highlights.length > 0 ||
+            (timeline?.markers.length ?? 0) > 0) && (
+            <div className="form-row">
+              {data.highlights.length > 0 && (
+                <button
+                  data-testid="review-edl-export"
+                  onClick={async () => {
+                    try {
+                      const out = await invoke<string>("edl_export", { dir });
+                      setExportMsg(`EDL 已导出: ${out}`);
+                    } catch (e) {
+                      setExportMsg(`EDL 导出失败: ${e}`);
+                    }
+                  }}
+                >
+                  导出剪辑工程 (EDL)
+                </button>
+              )}
+              <button
+                data-testid="review-ts-export"
+                onClick={async () => {
+                  try {
+                    const out = await invoke<string>("timestamps_export", { dir });
+                    setExportMsg(`时间戳清单已导出: ${out}`);
+                  } catch (e) {
+                    setExportMsg(`时间戳导出失败: ${e}`);
+                  }
+                }}
+              >
+                导出时间戳清单
+              </button>
+              {data.highlights.length > 0 && (
+                <>
+                  <button
+                    data-testid="review-fcpxml-export"
+                    onClick={async () => {
+                      try {
+                        const out = await invoke<string>("fcpxml_export", { dir });
+                        setExportMsg(`FCPXML 已导出: ${out}`);
+                      } catch (e) {
+                        setExportMsg(`FCPXML 导出失败: ${e}`);
+                      }
+                    }}
+                  >
+                    导出 FCPXML (达芬奇/FCP)
+                  </button>
+                  <button
+                    data-testid="review-jianying-export"
+                    onClick={async () => {
+                      try {
+                        const out = await invoke<string>("jianying_export", { dir });
+                        setExportMsg(`剪映草稿已导出: ${out}（复制到剪映草稿目录）`);
+                      } catch (e) {
+                        setExportMsg(`剪映导出失败: ${e}`);
+                      }
+                    }}
+                  >
+                    导出剪映草稿
+                  </button>
+                  <button
+                    data-testid="review-bundle-export"
+                    onClick={async () => {
+                      try {
+                        const r = await invoke<{ dir: string; files: string[] }>(
+                          "asset_bundle_export",
+                          { dir },
+                        );
+                        setExportMsg(`素材包已导出 (${r.files.length} 个文件): ${r.dir}`);
+                      } catch (e) {
+                        setExportMsg(`素材包导出失败: ${e}`);
+                      }
+                    }}
+                  >
+                    导出素材包
+                  </button>
+                </>
+              )}
+            </div>
           )}
           <ul data-testid="review-highlights">
             {data.highlights.map((h, i) => (
@@ -293,6 +427,41 @@ export default function ReviewPanel() {
               </li>
             ))}
           </ul>
+          {timeline &&
+            (timeline.markers.length > 0 || timeline.events.length > 0) && (
+              <>
+                <h3>
+                  打点与事件（{timeline.markers.length + timeline.events.length}）
+                </h3>
+                <ul data-testid="review-markers">
+                  {[
+                    ...timeline.markers.map((m) => ({
+                      at_ms: m.at_ms,
+                      label: `${m.kind === "manual" ? "⏱ 打点" : "⚡ 自动"}${m.note ? ` ${m.note}` : ""}`,
+                    })),
+                    ...timeline.events.map((ev) => ({
+                      at_ms: ev.at_ms,
+                      label:
+                        ev.kind === "super_chat"
+                          ? `💰 ${ev.label}`
+                          : ev.kind === "guard_buy"
+                            ? `⚓ ${ev.label}`
+                            : `● ${ev.label}`,
+                    })),
+                  ]
+                    .sort((a, b) => a.at_ms - b.at_ms)
+                    .map((item, i) => (
+                      <li
+                        key={i}
+                        style={{ cursor: "pointer", fontSize: 13 }}
+                        onClick={() => setCursor(item.at_ms)}
+                      >
+                        [{fmt(item.at_ms)}] {item.label}
+                      </li>
+                    ))}
+                </ul>
+              </>
+            )}
           {report != null && (report.danmaku_count as number) > 0 && (
             <div data-testid="review-report">
               <h3>场次报告</h3>
@@ -330,6 +499,7 @@ export default function ReviewPanel() {
             </div>
           )}
           {uploadMsg && <div data-testid="upload-msg">{uploadMsg}</div>}
+          <CoverPanel dir={dir} />
           <h3>已有切片（{data.clips.length}）</h3>
           <ul>
             {data.clips.map((c) => (

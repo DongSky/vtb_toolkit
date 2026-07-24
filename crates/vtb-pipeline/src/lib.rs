@@ -6,6 +6,7 @@ pub mod subtitle;
 pub mod energy;
 pub mod danmaku_log;
 pub mod danmaku_xml;
+pub mod markers;
 pub mod job;
 
 pub use error::PipelineError;

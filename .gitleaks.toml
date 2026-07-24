@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public Bilibili WBI reference vector used by a unit test"
+regexTarget = "secret"
+regexes = [
+  '''^ea1db124af3c7062474693fa704f4ff8$''',
+]
+paths = [
+  '''(^|/)\.git/''',
+  '''(^|/)dist/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)target/''',
+]

@@ -25,3 +25,4 @@ libc = "0.2"
 vtb-overlay = { version = "0.1.0", path = "../vtb-overlay" }
 vtb-hotwords = { version = "0.1.0", path = "../vtb-hotwords" }
 vtb-account = { path = "../vtb-account" }
+tempfile = "3"

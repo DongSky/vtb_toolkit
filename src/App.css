@@ -203,6 +203,16 @@ button:disabled {
   font-size: 0.85em;
 }
 
+.dm-marker-toast {
+  color: #00953f;
+  background: #00c85315;
+  border: 1px solid #00c85340;
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 0.85em;
+  animation: dm-fade 0.25s ease-out;
+}
+
 .dm-ctrl .hint {
   opacity: 0.6;
   font-size: 0.8em;
@@ -394,4 +404,62 @@ button.danger {
   padding: 0 4px;
   margin-right: 4px;
   font-size: 0.78em;
+}
+
+/* 封面辅助 */
+.cover-panel {
+  border-top: 1px solid var(--border, #ddd);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.cover-idea {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+
+.cover-prompt {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.cover-prompt code {
+  flex: 1;
+  font-size: 0.78em;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.cover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.cover-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cover-thumb img {
+  width: 100%;
+  border-radius: 6px;
+  background: #000;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+}
+
+.cover-thumb label {
+  font-size: 0.78em;
+  opacity: 0.7;
+}
+
+.cover-gen {
+  margin-top: 10px;
 }

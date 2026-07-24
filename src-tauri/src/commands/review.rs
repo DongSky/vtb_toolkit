@@ -23,6 +23,32 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
         .and_then(|t| serde_json::from_str(&t).ok())
 }
 
+/// Discover the source recording for an analysis dir: prefer flv/ts
+/// originals in the parent (recorder layout) over remuxed mp4 duplicates.
+/// Shared by review_load / edl_export / the editor-export commands.
+pub(crate) fn discover_source_video(dir: &Path) -> Option<PathBuf> {
+    dir.parent()
+        .and_then(|p| std::fs::read_dir(p).ok())
+        .and_then(|rd| {
+            let mut media: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            media.sort();
+            media
+                .iter()
+                .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
+                .cloned()
+                .or_else(|| media.into_iter().next())
+        })
+}
+
 /// Load review artifacts from an offline output directory.
 #[tauri::command]
 pub async fn review_load(dir: String) -> Result<ReviewData, String> {
@@ -45,29 +71,7 @@ pub async fn review_load(dir: String) -> Result<ReviewData, String> {
 
     // Find a likely source video: parent dir media files (recorder layout
     // puts out/ next to rec.flv / parts).
-    let video = dir
-        .parent()
-        .and_then(|p| std::fs::read_dir(p).ok())
-        .and_then(|rd| {
-            let mut media: Vec<PathBuf> = rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
-                        .unwrap_or(false)
-                })
-                .collect();
-            media.sort();
-            // Prefer flv/ts originals over remuxed mp4 duplicates.
-            media
-                .iter()
-                .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
-                .cloned()
-                .or_else(|| media.into_iter().next())
-        })
-        .map(|p| p.to_string_lossy().into_owned());
+    let video = discover_source_video(&dir).map(|p| p.to_string_lossy().into_owned());
 
     Ok(ReviewData {
         signals,
@@ -122,27 +126,7 @@ pub async fn edl_export(dir: String) -> Result<String, String> {
         return Err("没有可导出的高能片段".into());
     }
     // Source file name: same discovery as review_load's video field.
-    let source = dir
-        .parent()
-        .and_then(|p| std::fs::read_dir(p).ok())
-        .and_then(|rd| {
-            let mut media: Vec<PathBuf> = rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
-                        .unwrap_or(false)
-                })
-                .collect();
-            media.sort();
-            media
-                .iter()
-                .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
-                .cloned()
-                .or_else(|| media.into_iter().next())
-        })
+    let source = discover_source_video(&dir)
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "recording.flv".into());
 

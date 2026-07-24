@@ -38,6 +38,10 @@ pub struct AppState {
     pub tts_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub tts_paid_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub tts_tx: std::sync::OnceLock<tokio::sync::mpsc::Sender<String>>,
+    /// 打点: room_id → active recording session directory. Maintained by
+    /// the recorder event pump; marker writers (hotkey / button / danmaku
+    /// command / realtime alerts) append to `<dir>/markers.jsonl`.
+    pub marker_dirs: std::sync::Arc<Mutex<HashMap<u64, std::path::PathBuf>>>,
 }
 
 impl Default for AppState {
@@ -60,6 +64,7 @@ impl Default for AppState {
             tts_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_paid_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tts_tx: std::sync::OnceLock::new(),
+            marker_dirs: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

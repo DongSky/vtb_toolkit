@@ -78,6 +78,50 @@ describe("DanmakuPanel", () => {
     );
   });
 
+  it("打点 button targets the active recording room and toasts on marker events", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "marker_rooms") return Promise.resolve([320]);
+      if (cmd === "danmaku_status" || cmd === "danmaku_timer_status")
+        return Promise.resolve([]);
+      if (cmd === "danmaku_translate_status") return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+    render(<DanmakuPanel />);
+    // Button enables once a recording session exists.
+    await waitFor(() =>
+      expect(screen.getByTestId("dm-marker-add")).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByTestId("dm-marker-note"), {
+      target: { value: "名场面" },
+    });
+    fireEvent.click(screen.getByTestId("dm-marker-add"));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("marker_add", {
+        roomId: 320,
+        note: "名场面",
+      }),
+    );
+
+    // Marker event (from any source) shows the toast.
+    await waitFor(() => expect(listenHandlers["marker://added"]).toBeDefined());
+    listenHandlers["marker://added"]({
+      payload: { room_id: 320, kind: "manual", source: "hotkey", note: null },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("dm-marker-toast")).toHaveTextContent(
+        "已打点 房间320",
+      ),
+    );
+  });
+
+  it("打点 button disabled without an active recording session", async () => {
+    invokeMock.mockResolvedValue([]);
+    render(<DanmakuPanel />);
+    await waitFor(() =>
+      expect(screen.getByTestId("dm-marker-add")).toBeDisabled(),
+    );
+  });
+
   it("starts auto-translation and attaches translations by tid", async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "danmaku_translate_status") return Promise.resolve(null);
