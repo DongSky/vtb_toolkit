@@ -46,9 +46,7 @@ pub async fn verify_recording(ffmpeg_dir_hint: &Path, file: &Path) -> RecordingH
     }
     match audio_rms_db {
         None => issues.push("无音频流".to_string()),
-        Some(db) if db < SILENCE_RMS_DB => {
-            issues.push(format!("疑似无声 (RMS {db:.1} dB)"))
-        }
+        Some(db) if db < SILENCE_RMS_DB => issues.push(format!("疑似无声 (RMS {db:.1} dB)")),
         _ => {}
     }
     if let Some(codec) = &video_codec {
@@ -85,10 +83,10 @@ pub async fn remux_mp4(ffmpeg: &Path, input: &Path) -> Result<PathBuf> {
         cmd.args(["-tag:v", "hvc1"]);
     }
     cmd.arg(&output);
-    let status = cmd
-        .status()
+    let status = run_tool(cmd)
         .await
-        .map_err(|e| RecorderError::FfmpegFailed(format!("remux spawn: {e}")))?;
+        .ok_or_else(|| RecorderError::FfmpegFailed("remux failed or timed out".into()))?
+        .status;
     if !status.success() {
         return Err(RecorderError::FfmpegFailed(format!("remux exit {status}")));
     }
@@ -103,6 +101,8 @@ const TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 async fn run_tool(mut cmd: tokio::process::Command) -> Option<std::process::Output> {
     cmd.stdin(std::process::Stdio::null());
     cmd.kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
     let child = cmd.output();
     tokio::time::timeout(TOOL_TIMEOUT, child).await.ok()?.ok()
 }
@@ -118,7 +118,12 @@ fn sibling_tool(ffmpeg: &Path, tool: &str) -> PathBuf {
 async fn probe_codec(ffprobe: &Path, file: &Path, stream: &str) -> Option<String> {
     let mut cmd = tokio::process::Command::new(ffprobe);
     cmd.args(["-v", "error", "-select_streams", stream])
-        .args(["-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1"])
+        .args([
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=nw=1:nk=1",
+        ])
         .arg(file);
     let out = run_tool(cmd).await?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -127,12 +132,17 @@ async fn probe_codec(ffprobe: &Path, file: &Path, stream: &str) -> Option<String
 
 async fn probe_luma(ffmpeg: &Path, file: &Path) -> Option<f64> {
     let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.args(["-hide_banner", "-i"])
-        .arg(file)
-        .args([
-            "-map", "0:v:0", "-vf", "signalstats,metadata=print:file=-",
-            "-frames:v", "20", "-f", "null", "-",
-        ]);
+    cmd.args(["-hide_banner", "-i"]).arg(file).args([
+        "-map",
+        "0:v:0",
+        "-vf",
+        "signalstats,metadata=print:file=-",
+        "-frames:v",
+        "20",
+        "-f",
+        "null",
+        "-",
+    ]);
     let out = run_tool(cmd).await?;
     let text = String::from_utf8_lossy(&out.stdout);
     let lumas: Vec<f64> = text
@@ -145,13 +155,15 @@ async fn probe_luma(ffmpeg: &Path, file: &Path) -> Option<f64> {
 
 async fn probe_rms(ffmpeg: &Path, file: &Path) -> Option<f64> {
     let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.args(["-hide_banner", "-i"])
-        .arg(file)
-        .args([
-            "-map", "0:a:0",
-            "-af", "astats=metadata=1:reset=0,ametadata=print:file=-",
-            "-f", "null", "-",
-        ]);
+    cmd.args(["-hide_banner", "-i"]).arg(file).args([
+        "-map",
+        "0:a:0",
+        "-af",
+        "astats=metadata=1:reset=0,ametadata=print:file=-",
+        "-f",
+        "null",
+        "-",
+    ]);
     let out = run_tool(cmd).await?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.lines()
@@ -175,7 +187,15 @@ mod tests {
         let mut cmd = tokio::process::Command::new("ffmpeg");
         cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
         cmd.args(video_args);
-        cmd.args(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest"]);
+        cmd.args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ]);
         cmd.arg(&path);
         assert!(cmd.status().await.unwrap().success());
         path
@@ -192,8 +212,14 @@ mod tests {
             dir.path(),
             "good.mp4",
             &[
-                "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
             ],
         )
         .await;
@@ -215,8 +241,14 @@ mod tests {
             dir.path(),
             "black.mp4",
             &[
-                "-f", "lavfi", "-i", "color=black:duration=2:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=black:duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=44100:cl=mono:d=2",
             ],
         )
         .await;
@@ -238,11 +270,27 @@ mod tests {
         let flv = dir.path().join("in.flv");
         let st = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
-                "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
-                "-shortest", "-f", "flv",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
+                "-shortest",
+                "-f",
+                "flv",
             ])
             .arg(&flv)
             .status()

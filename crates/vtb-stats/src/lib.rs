@@ -13,7 +13,7 @@ mod users;
 
 pub use db::StatsDb;
 pub use error::{Result, StatsError};
-pub use export::{export_markdown, export_superchats_csv};
+pub use export::{export_markdown, export_markdown_localized, export_superchats_csv};
 pub use report::{GuardRecord, ScRecord, SessionReport};
 pub use tokenize::tokenize;
 pub use users::{note_key, UserNote, UserProfile};

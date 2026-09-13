@@ -1,10 +1,11 @@
 //! Bilibili account management: QR-code login, credential storage in the
 //! OS keychain, and cookie injection for API clients.
 
-pub mod error;
 pub mod credentials;
+pub mod error;
 pub mod qr;
 pub mod store;
+pub mod youtube;
 
 pub use credentials::Credentials;
 pub use error::AccountError;

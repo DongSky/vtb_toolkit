@@ -30,6 +30,8 @@ pub fn load_settings(path: &Path) -> serde_json::Value {
 
 /// Set one key and persist atomically (write temp + rename).
 pub fn save_key(path: &Path, key: &str, value: serde_json::Value) -> Result<(), String> {
+    static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SETTINGS_LOCK.lock().map_err(|_| "Settings are busy")?;
     let mut settings = load_settings(path);
     settings[key] = value;
     let tmp = path.with_extension("json.tmp");
@@ -37,6 +39,14 @@ pub fn save_key(path: &Path, key: &str, value: serde_json::Value) -> Result<(), 
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn save_app_key(
+    app: &tauri::AppHandle,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    save_key(&settings_path(app)?, key, value)
 }
 
 #[tauri::command]

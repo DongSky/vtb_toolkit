@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use vtb_pipeline::{JobConfig, OfflineJob};
-use vtb_translate::{OpenAiCompatBackend, AnthropicBackend, LlmBackend, StreamerProfile};
+use vtb_translate::{AnthropicBackend, LlmBackend, OpenAiCompatBackend, StreamerProfile};
 
 pub const EVENT_JOB_PROGRESS: &str = "job://progress";
 pub const EVENT_JOB_DONE: &str = "job://done";
@@ -50,6 +50,22 @@ pub struct OfflineOptions {
     /// Multimodal rescoring of highlights (vision model, needs API key).
     #[serde(default)]
     pub multimodal: bool,
+    /// Discover highlights from the meaning of timestamped ASR text.
+    #[serde(default)]
+    pub semantic_highlights: bool,
+    /// Coarsely scan the full recording with timestamped frames.
+    #[serde(default)]
+    pub visual_highlights: bool,
+    /// Context added before/after an AI-proposed moment.
+    #[serde(default)]
+    pub ai_pre_roll_secs: Option<u64>,
+    #[serde(default)]
+    pub ai_post_roll_secs: Option<u64>,
+    /// Visual sampling cadence and unattended output cap.
+    #[serde(default)]
+    pub visual_sample_secs: Option<u64>,
+    #[serde(default)]
+    pub ai_max_clips: Option<usize>,
     /// 歌切 mode: cut sustained song segments separately.
     #[serde(default)]
     pub song_clips: bool,
@@ -85,8 +101,9 @@ struct DonePayload {
 }
 
 /// Shared LLM backend construction (also used by the live subtitle
-/// command). Resolution: explicit options → settings.json["llm"] → env
-/// (OPENAI_BASE_URL/…_API_KEY) → keychain → defaults.
+/// command). Reads the latest AI settings for each new task. Explicit legacy
+/// options override public fields; scoped keychain credentials precede matching
+/// environment credentials. Vision and image services resolve independently.
 pub fn build_backend_pub(
     app: &AppHandle,
     provider: Option<String>,
@@ -94,29 +111,18 @@ pub fn build_backend_pub(
     model: Option<String>,
     base_url: Option<String>,
 ) -> Result<Arc<dyn LlmBackend>, String> {
-    let settings = super::config::read_settings(app);
-    let resolved = super::llm::resolve_llm(
-        provider,
-        api_key,
-        model,
-        base_url,
-        &settings["llm"],
-        &|name| std::env::var(name).ok(),
-        vtb_account::Secrets::get("llm-api-key").ok().flatten(),
-    )?;
+    let service = super::ai::resolve_text(app, provider, api_key, model, base_url)?;
+    let resolved = service.public;
+    let api_key = service.api_key.unwrap_or_default();
     match resolved.provider.as_str() {
         "openai" => Ok(Arc::new(OpenAiCompatBackend::new(
-            resolved
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".into()),
-            resolved.api_key,
+            resolved.base_url,
+            api_key,
             resolved.model,
         ))),
         _ => {
-            let mut b = AnthropicBackend::new(resolved.api_key, resolved.model);
-            if let Some(url) = resolved.base_url {
-                b = b.with_base_url(url);
-            }
+            let mut b = AnthropicBackend::new(api_key, resolved.model);
+            b = b.with_base_url(resolved.base_url);
             Ok(Arc::new(b))
         }
     }
@@ -159,6 +165,20 @@ pub async fn offline_process(
         cfg.highlights = options.highlights;
         cfg.burn_subtitles = options.burn_subtitles;
         cfg.song_clips = options.song_clips;
+        cfg.semantic_highlights = options.semantic_highlights;
+        cfg.visual_highlights = options.visual_highlights;
+        if let Some(seconds) = options.ai_pre_roll_secs {
+            cfg.ai_clips.pre_roll_ms = seconds.min(120) * 1000;
+        }
+        if let Some(seconds) = options.ai_post_roll_secs {
+            cfg.ai_clips.post_roll_ms = seconds.min(120) * 1000;
+        }
+        if let Some(seconds) = options.visual_sample_secs {
+            cfg.ai_clips.visual_sample_ms = seconds.clamp(5, 300) * 1000;
+        }
+        if let Some(max_clips) = options.ai_max_clips {
+            cfg.ai_clips.max_clips = max_clips.clamp(1, 100);
+        }
         cfg.target_lang = options.target_lang.clone();
         cfg.danmaku_log = options.danmaku_log.as_ref().map(PathBuf::from);
         cfg.session_start = options
@@ -186,11 +206,9 @@ pub async fn offline_process(
         };
         let (hotword_prompt, hotword_glossary) =
             super::hotwords::load_for_processing(&app, &options.hotword_tables);
-        let mut engine_raw = vtb_asr::engine::WhisperEngine::new(
-            std::path::Path::new(&options.model_path),
-            lang,
-        )
-        .map_err(|e| e.to_string())?;
+        let mut engine_raw =
+            vtb_asr::engine::WhisperEngine::new(std::path::Path::new(&options.model_path), lang)
+                .map_err(|e| e.to_string())?;
         if let Some(p) = &hotword_prompt {
             tracing::info!("ASR 热词表 prompt: {p}");
             engine_raw = engine_raw.with_initial_prompt(p.clone());
@@ -198,37 +216,66 @@ pub async fn offline_process(
         let engine = Arc::new(engine_raw);
 
         let mut job = OfflineJob::new(cfg, engine);
-        if options.multimodal {
-            let settings = super::config::read_settings(&app);
-            let key = super::llm::resolve_llm(
-                Some("anthropic".into()),
-                options.llm_api_key.clone(),
-                None,
-                None,
-                &settings["llm"],
-                &|name| std::env::var(name).ok(),
-                vtb_account::Secrets::get("llm-api-key").ok().flatten(),
-            )
-            .map_err(|_| "多模态复核需要 Anthropic API key")?
-            .api_key;
-            let judge = vtb_highlight::multimodal::AnthropicJudge::new(
-                key,
-                options
-                    .llm_model
-                    .clone()
-                    .unwrap_or_else(|| "claude-haiku-4-5".into()),
-            );
-            job = job.with_judge(Arc::new(judge));
+        if options.multimodal || options.visual_highlights {
+            let service =
+                super::ai::resolve_service(&app, vtb_translate::settings::ServiceKind::Vision)?;
+            let resolved = service.public;
+            let api_key = service.api_key.unwrap_or_default();
+
+            match resolved.provider.as_str() {
+                "openai" => {
+                    let vision = Arc::new(vtb_highlight::multimodal::OpenAiVisionJudge::new(
+                        resolved.base_url,
+                        api_key,
+                        resolved.model,
+                    ));
+                    if options.multimodal || options.visual_highlights {
+                        let judge: Arc<dyn vtb_highlight::multimodal::MultimodalJudge> =
+                            vision.clone();
+                        job = job.with_judge(judge);
+                    }
+                    if options.visual_highlights {
+                        let analyzer: Arc<dyn vtb_highlight::multimodal::VisualMomentAnalyzer> =
+                            vision;
+                        job = job.with_visual_analyzer(analyzer);
+                    }
+                }
+                _ => {
+                    let mut vision =
+                        vtb_highlight::multimodal::AnthropicJudge::new(api_key, resolved.model);
+                    vision = vision.with_base_url(resolved.base_url);
+                    let vision = Arc::new(vision);
+                    if options.multimodal || options.visual_highlights {
+                        let judge: Arc<dyn vtb_highlight::multimodal::MultimodalJudge> =
+                            vision.clone();
+                        job = job.with_judge(judge);
+                    }
+                    if options.visual_highlights {
+                        let analyzer: Arc<dyn vtb_highlight::multimodal::VisualMomentAnalyzer> =
+                            vision;
+                        job = job.with_visual_analyzer(analyzer);
+                    }
+                }
+            }
+        }
+
+        let text_backend = if options.translate || options.semantic_highlights {
+            Some(build_backend(&app, &options)?)
+        } else {
+            None
+        };
+        if options.semantic_highlights {
+            job = job.with_semantic_backend(text_backend.as_ref().unwrap().clone());
         }
         if options.translate {
-            let backend = build_backend(&app, &options)?;
             let mut profile = match &options.profile_path {
-                Some(p) => StreamerProfile::load(std::path::Path::new(p))
-                    .map_err(|e| e.to_string())?,
+                Some(p) => {
+                    StreamerProfile::load(std::path::Path::new(p)).map_err(|e| e.to_string())?
+                }
                 None => StreamerProfile::default(),
             };
             super::hotwords::append_glossary(&mut profile, hotword_glossary.clone());
-            job = job.with_translator(backend, profile);
+            job = job.with_translator(text_backend.unwrap(), profile);
         }
 
         let (ptx, mut prx) = mpsc::channel(64);
@@ -284,10 +331,7 @@ pub async fn offline_process(
 }
 
 #[tauri::command]
-pub async fn offline_cancel(
-    state: State<'_, AppState>,
-    job_id: String,
-) -> Result<(), String> {
+pub async fn offline_cancel(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
     if let Some(task) = state.jobs.lock().unwrap().remove(&job_id) {
         task.abort();
         Ok(())

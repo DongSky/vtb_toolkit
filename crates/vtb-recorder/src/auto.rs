@@ -24,6 +24,7 @@ pub trait StreamResolver: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct ResolvedStream {
     pub url: String,
+    pub audio: Option<crate::ffmpeg::AudioInput>,
     pub headers: Vec<(String, String)>,
     pub user_agent: Option<String>,
     pub extension: String,
@@ -35,9 +36,18 @@ pub struct ResolvedStream {
 /// Events the orchestrator emits for UI display.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecorderEvent {
-    RecordingStarted { room_id: u64, output_dir: PathBuf },
-    RecordingStopped { room_id: u64, metadata: SessionMetadata },
-    RecordingError { room_id: u64, message: String },
+    RecordingStarted {
+        room_id: u64,
+        output_dir: PathBuf,
+    },
+    RecordingStopped {
+        room_id: u64,
+        metadata: SessionMetadata,
+    },
+    RecordingError {
+        room_id: u64,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +250,7 @@ impl<R: StreamResolver + 'static> AutoRecorder<R> {
         let stem_base = format!("room{room_id}-{stamp}");
 
         let sup_config = SupervisorConfig {
+            startup_timeout: Duration::ZERO,
             room_id,
             output_dir: dir.clone(),
             stem_base: stem_base.clone(),
@@ -297,8 +308,7 @@ impl<R: StreamResolver + 'static> AutoRecorder<R> {
                     .max_by_key(|s| s.size_bytes)
                     .map(|s| s.path.clone())
                 {
-                    metadata.health =
-                        Some(verify_recording(&self.recorder.binary, &largest).await);
+                    metadata.health = Some(verify_recording(&self.recorder.binary, &largest).await);
                 }
             }
             // Player-friendly MP4 next to each part.
@@ -336,14 +346,15 @@ impl BiliResolver {
 impl StreamResolver for BiliResolver {
     async fn resolve(&self, room_id: u64) -> Result<ResolvedStream> {
         let streams = self.api.play_info(room_id, self.qn).await?;
-        let best = crate::stream::pick_best(&streams)
-            .ok_or(crate::error::RecorderError::NoStreamUrl)?;
+        let best =
+            crate::stream::pick_best(&streams).ok_or(crate::error::RecorderError::NoStreamUrl)?;
         let extension = match best.format.as_str() {
             "flv" => "flv",
             "ts" => "ts",
             _ => "mp4", // fmp4/hls
         };
         Ok(ResolvedStream {
+            audio: None,
             url: best.url.clone(),
             headers: vec![(
                 "Referer".to_string(),
@@ -374,6 +385,7 @@ mod tests {
         async fn resolve(&self, _room_id: u64) -> Result<ResolvedStream> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(ResolvedStream {
+                audio: None,
                 url: "ignored".into(),
                 headers: vec![],
                 user_agent: None,
@@ -396,26 +408,9 @@ mod tests {
     /// watchdog sees healthy growth. Unique path per call — parallel tests
     /// must not overwrite a script another test is executing.
     fn fake_recorder() -> FfmpegRecorder {
-        use std::sync::atomic::AtomicU64;
-        static N: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join("vtb-recorder-test-bin");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!(
-            "fake-writer-{}-{}.sh",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::write(
-            &path,
-            "#!/bin/sh\ntrap 'exit 0' INT TERM\nout=$(eval echo \\${$#})\nwhile true; do echo data >> \"$out\"; sleep 1; done\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        FfmpegRecorder::new(path)
+        // Keep this directory alive for the test process lifetime.
+        let dir = tempfile::tempdir().unwrap().keep();
+        crate::test_process::recorder(&dir, 300, false, false)
     }
 
     fn test_config(room_id: u64, root: &std::path::Path) -> AutoRecorderConfig {
@@ -432,7 +427,9 @@ mod tests {
         let calls = Arc::new(AtomicU32::new(0));
         let auto = AutoRecorder::new(
             test_config(42, dir.path()),
-            FakeResolver { calls: calls.clone() },
+            FakeResolver {
+                calls: calls.clone(),
+            },
             fake_recorder(),
         );
 
@@ -440,10 +437,15 @@ mod tests {
         let (etx, mut erx) = mpsc::channel(8);
         let handle = tokio::spawn(auto.run(mrx, etx));
 
-        mtx.send(MonitorEvent::WentLive { room_id: 42 }).await.unwrap();
+        mtx.send(MonitorEvent::WentLive { room_id: 42 })
+            .await
+            .unwrap();
         let started = erx.recv().await.unwrap();
         let session_dir = match &started {
-            RecorderEvent::RecordingStarted { room_id: 42, output_dir } => output_dir.clone(),
+            RecorderEvent::RecordingStarted {
+                room_id: 42,
+                output_dir,
+            } => output_dir.clone(),
             other => panic!("expected start, got {other:?}"),
         };
 
@@ -470,7 +472,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        mtx.send(MonitorEvent::WentOffline { room_id: 42 }).await.unwrap();
+        mtx.send(MonitorEvent::WentOffline { room_id: 42 })
+            .await
+            .unwrap();
         let stopped = erx.recv().await.unwrap();
         match stopped {
             RecorderEvent::RecordingStopped { room_id, metadata } => {
@@ -501,35 +505,43 @@ mod tests {
         let calls = Arc::new(AtomicU32::new(0));
         let auto = AutoRecorder::new(
             test_config(1, dir.path()),
-            FakeResolver { calls: calls.clone() },
+            FakeResolver {
+                calls: calls.clone(),
+            },
             fake_recorder(),
         );
         let (mtx, mrx) = mpsc::channel(8);
         let (etx, mut erx) = mpsc::channel(8);
         let handle = tokio::spawn(auto.run(mrx, etx));
 
-        mtx.send(MonitorEvent::WentLive { room_id: 1 }).await.unwrap();
+        mtx.send(MonitorEvent::WentLive { room_id: 1 })
+            .await
+            .unwrap();
         let _ = erx.recv().await.unwrap();
-        mtx.send(MonitorEvent::WentLive { room_id: 1 }).await.unwrap();
+        mtx.send(MonitorEvent::WentLive { room_id: 1 })
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         drop(mtx);
         handle.await.unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "second live must be ignored");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "second live must be ignored"
+        );
     }
 
     #[tokio::test]
     async fn resolver_failure_reports_error_event() {
         let dir = tempfile::tempdir().unwrap();
-        let auto = AutoRecorder::new(
-            test_config(9, dir.path()),
-            FailingResolver,
-            fake_recorder(),
-        );
+        let auto = AutoRecorder::new(test_config(9, dir.path()), FailingResolver, fake_recorder());
         let (mtx, mrx) = mpsc::channel(8);
         let (etx, mut erx) = mpsc::channel(8);
         let handle = tokio::spawn(auto.run(mrx, etx));
 
-        mtx.send(MonitorEvent::WentLive { room_id: 9 }).await.unwrap();
+        mtx.send(MonitorEvent::WentLive { room_id: 9 })
+            .await
+            .unwrap();
         // Start event fires (session dir created), then the supervisor
         // gives up and an error event follows.
         let mut saw_error = false;

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "docs:build": "node scripts/build-guide.mjs --check",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -16,7 +17,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "youtubei.js": "18.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

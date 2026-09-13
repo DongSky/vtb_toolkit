@@ -1,3 +1,4 @@
+import { t, tm, useLocale } from "../i18n";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -24,6 +25,7 @@ export default function ModelPicker({
   value: string;
   onChange: (path: string) => void;
 }) {
+  useLocale();
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -66,16 +68,16 @@ export default function ModelPicker({
       <div className="form-row">
         <select
           data-testid="model-select"
-          value={models.find((m) => m.path === value)?.name ?? ""}
+          value={models.find((m) => m.path.replace(/\\/g, "/") === value.replace(/\\/g, "/"))?.name ?? ""}
           onChange={(e) => {
             const m = models.find((x) => x.name === e.target.value);
             if (m?.downloaded) onChange(m.path);
           }}
         >
-          <option value="">选择 whisper 模型…</option>
+          <option value="">{t("选择 whisper 模型…")}</option>
           {models.map((m) => (
             <option key={m.name} value={m.name} disabled={!m.downloaded}>
-              {m.name} ({m.size_mb}MB{m.downloaded ? "" : "，未下载"}) — {m.note}
+              {m.name} ({m.size_mb}MB{m.downloaded ? "" : t("，未下载")}) — {tm(m.note)}
             </option>
           ))}
         </select>
@@ -92,13 +94,13 @@ export default function ModelPicker({
             >
               {downloading === m.name
                 ? progress?.total
-                  ? `下载中 ${Math.round((progress.downloaded / progress.total) * 100)}%`
-                  : "下载中…"
-                : `下载 ${m.name}`}
+                  ? t("下载中 {0}%", Math.round((progress.downloaded / progress.total) * 100))
+                  : t("下载中…")
+                : t("下载 {0}", m.name)}
             </button>
           ))}
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error">{tm(error)}</div>}
     </div>
   );
 }

@@ -1,14 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>VTB Toolkit</title>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root"><p style="font-family:system-ui;padding:24px">正在加载 VTB Toolkit…</p></div>
+    <script>
+      (() => {
+        let lang = navigator.language;
+        try { lang = localStorage.getItem("vtb.locale") || lang; } catch {}
+        lang = /^ja/i.test(lang) ? "ja" : /^en/i.test(lang) ? "en" : "zh-CN";
+        document.documentElement.lang = lang;
+        document.querySelector("#root p").textContent = lang === "en" ? "Loading VTB Toolkit…" : lang === "ja" ? "VTB Toolkit を読み込み中…" : "正在加载 VTB Toolkit…";
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

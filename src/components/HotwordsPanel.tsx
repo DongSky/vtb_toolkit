@@ -1,3 +1,4 @@
+import { t, tm, useLocale } from "../i18n";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -25,6 +26,7 @@ interface Summary {
 }
 
 export default function HotwordsPanel() {
+  useLocale();
   const [tables, setTables] = useState<Summary[]>([]);
   const [current, setCurrent] = useState<Table | null>(null);
   const [name, setName] = useState("");
@@ -60,7 +62,7 @@ export default function HotwordsPanel() {
       );
       setMsg(
         `已保存「${r.table.name}」，${r.table.entries.length} 个词条` +
-          (useLlm ? (r.used_llm ? "（AI 规整）" : "（AI 不可用，已用规则解析）") : "（规则解析）"),
+          "\n" + (useLlm ? (r.used_llm ? "（AI 规整）" : "（AI 不可用，已用规则解析）") : "（规则解析）"),
       );
       setCurrent(r.table);
       setRaw("");
@@ -123,17 +125,15 @@ export default function HotwordsPanel() {
 
   return (
     <div className="panel" data-testid="hotwords-panel">
-      <h2>热词表</h2>
+      <h2>{t("热词表")}</h2>
       <p className="login-note">
-        用任意格式描述你的专有名词（选手ID、英雄名、梗、固定译法…），AI
-        会自动规整成统一词条。热词表可在离线处理与实时字幕中启用，提高识别与翻译准确率。
-      </p>
+        {t("用任意格式描述你的专有名词（选手ID、英雄名、梗、固定译法…），AI 会自动规整成统一词条。热词表可在离线处理与实时字幕中启用，提高识别与翻译准确率。")}{" "}</p>
 
       <div className="form-col">
         <div className="form-row">
           <input
             data-testid="hw-name"
-            placeholder="表名（如：DOTA选手 / 英雄译名）"
+            placeholder={t("表名（如：DOTA选手 / 英雄译名）")}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
@@ -144,14 +144,13 @@ export default function HotwordsPanel() {
               checked={useLlm}
               onChange={(e) => setUseLlm(e.target.checked)}
             />
-            AI 规整
-          </label>
+            {t("AI 规整")}{" "}</label>
         </div>
         <textarea
           data-testid="hw-raw"
           rows={5}
           placeholder={
-            "任意格式，例如：\n我们队打野是GPK，经常被打成gpk或者鸡皮开\n帕克=Puck，敌法师(AM)翻译成Anti-Mage\n- XinQ  # 四号位"
+            t("任意格式，例如：\n我们队打野是GPK，经常被打成gpk或者鸡皮开\n帕克=Puck，敌法师(AM)翻译成Anti-Mage\n- XinQ  # 四号位")
           }
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
@@ -161,37 +160,35 @@ export default function HotwordsPanel() {
           disabled={busy || !name || !raw.trim()}
           onClick={saveRaw}
         >
-          {busy ? "规整中…" : "保存为热词表"}
+          {busy ? t("规整中…") : t("保存为热词表")}
         </button>
       </div>
 
-      {msg && <div className="done" data-testid="hw-msg">{msg}</div>}
-      {error && <div className="error" data-testid="hw-error">{error}</div>}
+      {msg && <div className="done" data-testid="hw-msg">{msg.split("\n").map(tm).join(" ")}</div>}
+      {error && <div className="error" data-testid="hw-error">{tm(error)}</div>}
 
-      <h3>已有热词表（{tables.length}）</h3>
+      <h3>{t("已有热词表（{0}）", tables.length)}</h3>
       <ul data-testid="hw-list">
-        {tables.map((t) => (
-          <li key={t.name} data-testid={`hw-table-${t.name}`}>
+        {tables.map((table) => (
+          <li key={table.name} data-testid={`hw-table-${table.name}`}>
             <label>
               <input
                 type="checkbox"
-                checked={mergeSel.includes(t.name)}
+                checked={mergeSel.includes(table.name)}
                 onChange={(e) =>
                   setMergeSel(
                     e.target.checked
-                      ? [...mergeSel, t.name]
-                      : mergeSel.filter((x) => x !== t.name),
+                      ? [...mergeSel, table.name]
+                      : mergeSel.filter((x) => x !== table.name),
                   )
                 }
               />
             </label>{" "}
-            <b>{t.name}</b>（{t.entries} 词条）{t.description && ` — ${t.description}`}
-            <button style={{ marginLeft: 8 }} onClick={() => openTable(t.name)}>
-              查看
-            </button>
-            <button className="danger" data-testid={`hw-del-${t.name}`} onClick={() => deleteTable(t.name)}>
-              删除
-            </button>
+            <b>{table.name}</b>{t("（{0} 词条）", table.entries)}{table.description && ` — ${table.description}`}
+            <button style={{ marginLeft: 8 }} onClick={() => openTable(table.name)}>
+              {t("查看")}{" "}</button>
+            <button className="danger" data-testid={`hw-del-${table.name}`} onClick={() => deleteTable(table.name)}>
+              {t("删除")}{" "}</button>
           </li>
         ))}
       </ul>
@@ -199,30 +196,28 @@ export default function HotwordsPanel() {
         <div className="form-row" data-testid="hw-merge-bar">
           <input
             data-testid="hw-merge-name"
-            placeholder="合并后的新表名"
+            placeholder={t("合并后的新表名")}
             value={mergeName}
             onChange={(e) => setMergeName(e.target.value)}
           />
           <button data-testid="hw-merge" disabled={!mergeName} onClick={doMerge}>
-            合并 {mergeSel.length} 个表
-          </button>
+            {t("合并 {0} 个表", mergeSel.length)}{" "}</button>
         </div>
       )}
 
       {current && (
         <div data-testid="hw-detail">
           <h3>
-            「{current.name}」词条（{current.entries.length}）
-          </h3>
+            {t("「{0}」词条（{1}）", current.name, current.entries.length)}{" "}</h3>
           <table className="hw-table">
             <thead>
               <tr>
-                <th>词条</th>
-                <th>别名</th>
-                <th>读音</th>
-                <th>译法</th>
-                <th>类别</th>
-                <th>备注</th>
+                <th>{t("词条")}</th>
+                <th>{t("别名")}</th>
+                <th>{t("读音")}</th>
+                <th>{t("译法")}</th>
+                <th>{t("类别")}</th>
+                <th>{t("备注")}</th>
                 <th></th>
               </tr>
             </thead>
@@ -258,6 +253,7 @@ export function HotwordSelect({
   value: string[];
   onChange: (names: string[]) => void;
 }) {
+  useLocale();
   const [tables, setTables] = useState<Summary[]>([]);
   useEffect(() => {
     Promise.resolve(invoke<Summary[]>("hotwords_list"))
@@ -267,21 +263,21 @@ export function HotwordSelect({
   if (tables.length === 0) return null;
   return (
     <div className="form-row" data-testid="hw-select">
-      <span style={{ fontSize: 13 }}>热词表:</span>
-      {tables.map((t) => (
-        <label key={t.name} style={{ fontSize: 13 }}>
+      <span style={{ fontSize: 13 }}>{t("热词表:")}</span>
+      {tables.map((table) => (
+        <label key={table.name} style={{ fontSize: 13 }}>
           <input
             type="checkbox"
-            checked={value.includes(t.name)}
+            checked={value.includes(table.name)}
             onChange={(e) =>
               onChange(
                 e.target.checked
-                  ? [...value, t.name]
-                  : value.filter((x) => x !== t.name),
+                  ? [...value, table.name]
+                  : value.filter((x) => x !== table.name),
               )
             }
           />
-          {t.name}
+          {table.name}
         </label>
       ))}
     </div>

@@ -1,3 +1,4 @@
+import { useLocale } from "../i18n";
 interface WordCloudProps {
   /** [word, count] pairs (from stats_report.word_freq, already top-N). */
   words: [string, number][];
@@ -20,6 +21,7 @@ const HUES = [210, 340, 20, 120, 275, 45];
  * on the hot terms (LAPLACE-style 词云).
  */
 export default function WordCloud({ words, max = 60 }: WordCloudProps) {
+  useLocale();
   const shown = words.slice(0, max);
   if (shown.length === 0) return null;
   const counts = shown.map(([, c]) => c);

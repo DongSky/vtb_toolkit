@@ -25,10 +25,7 @@ impl BilibiliPlatform {
     pub fn new(client: reqwest::Client, qn: u32) -> Self {
         Self {
             api: crate::stream::StreamApi::new(client.clone()),
-            resolver: crate::auto::BiliResolver::new(
-                crate::stream::StreamApi::new(client),
-                qn,
-            ),
+            resolver: crate::auto::BiliResolver::new(crate::stream::StreamApi::new(client), qn),
         }
     }
 
@@ -67,8 +64,14 @@ pub struct YtDlpPlatform {
 
 impl Default for YtDlpPlatform {
     fn default() -> Self {
+        let bundled = std::env::current_exe().ok().and_then(|exe| {
+            exe.parent()
+                .map(|dir| dir.join(format!("yt-dlp{}", std::env::consts::EXE_SUFFIX)))
+        });
         Self {
-            binary: "yt-dlp".into(),
+            binary: bundled
+                .filter(|path| path.is_file())
+                .unwrap_or_else(|| "yt-dlp".into()),
         }
     }
 }
@@ -81,11 +84,15 @@ impl YtDlpPlatform {
     /// Args to query live status: prints `True`/`False`/`None`.
     pub fn status_args(url: &str) -> Vec<String> {
         vec![
+            "--ignore-config".into(),
+            "--socket-timeout".into(),
+            "20".into(),
             "--no-warnings".into(),
             "--print".into(),
             "%(is_live)s".into(),
             "--playlist-items".into(),
             "1".into(),
+            "--".into(),
             url.to_string(),
         ]
     }
@@ -93,12 +100,28 @@ impl YtDlpPlatform {
     /// Args to resolve the direct stream URL of the best av format.
     pub fn resolve_args(url: &str) -> Vec<String> {
         vec![
+            "--ignore-config".into(),
+            "--socket-timeout".into(),
+            "20".into(),
+            "--no-playlist".into(),
             "--no-warnings".into(),
-            "-g".into(),
+            "--dump-single-json".into(),
             "-f".into(),
-            "best".into(),
+            "bestvideo+bestaudio/best".into(),
+            "--".into(),
             url.to_string(),
         ]
+    }
+
+    async fn run(&self, args: Vec<String>) -> Result<std::process::Output> {
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.args(args).kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+        tokio::time::timeout(std::time::Duration::from_secs(60), cmd.output())
+            .await
+            .map_err(|_| RecorderError::Config("yt-dlp 请求超时".into()))?
+            .map_err(|e| RecorderError::Config(format!("yt-dlp: {e}")))
     }
 }
 
@@ -107,7 +130,12 @@ fn which_exists(binary: &std::path::Path) -> bool {
         return binary.exists();
     }
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(binary).exists()))
+        .map(|p| {
+            std::env::split_paths(&p).any(|d| {
+                d.join(binary).exists()
+                    || cfg!(windows) && d.join(format!("{}.exe", binary.display())).exists()
+            })
+        })
         .unwrap_or(false)
 }
 
@@ -128,14 +156,20 @@ impl Platform for YtDlpPlatform {
     async fn check_live(&self, id: &str) -> Result<LiveStatus> {
         if !self.available() {
             return Err(RecorderError::Config(
-                "yt-dlp 未安装（brew install yt-dlp 以支持 YouTube/Twitch）".into(),
+                "yt-dlp 未安装或不在 PATH 中；Windows 可用 winget install yt-dlp.yt-dlp，macOS 可用 brew install yt-dlp".into(),
             ));
         }
-        let out = tokio::process::Command::new(&self.binary)
-            .args(Self::status_args(id))
-            .output()
-            .await
-            .map_err(|e| RecorderError::Config(format!("yt-dlp: {e}")))?;
+        let out = self.run(Self::status_args(id)).await?;
+        if !out.status.success() {
+            let error = String::from_utf8_lossy(&out.stderr);
+            if error.contains("not currently live") || error.contains("will begin in") {
+                return Ok(LiveStatus::Offline);
+            }
+            return Err(RecorderError::Config(format!(
+                "yt-dlp 状态检查失败: {}",
+                error.trim()
+            )));
+        }
         Ok(parse_is_live(&String::from_utf8_lossy(&out.stdout)))
     }
 
@@ -143,46 +177,86 @@ impl Platform for YtDlpPlatform {
         if !self.available() {
             return Err(RecorderError::Config("yt-dlp 未安装".into()));
         }
-        let out = tokio::process::Command::new(&self.binary)
-            .args(Self::resolve_args(id))
-            .output()
-            .await
-            .map_err(|e| RecorderError::Config(format!("yt-dlp: {e}")))?;
+        let out = self.run(Self::resolve_args(id)).await?;
         if !out.status.success() {
             return Err(RecorderError::Config(format!(
                 "yt-dlp 取流失败: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
         }
-        let url = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if url.is_empty() {
-            return Err(RecorderError::NoStreamUrl);
-        }
-        // HLS (m3u8) is typical for both YouTube and Twitch lives.
-        let extension = if url.contains(".m3u8") { "ts" } else { "mp4" };
-        Ok(ResolvedStream {
-            url,
-            headers: vec![],
-            user_agent: None,
-            extension: extension.into(),
-            backup_urls: vec![],
-        })
+        let info: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        resolved_info(&info)
     }
+}
+
+fn stream_headers(info: &serde_json::Value) -> Vec<(String, String)> {
+    info["http_headers"]
+        .as_object()
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn resolved_info(info: &serde_json::Value) -> Result<ResolvedStream> {
+    if info["is_live"] != true {
+        return Err(RecorderError::Config("该视频当前不是直播".into()));
+    }
+    let formats = info["requested_formats"].as_array();
+    let video = formats
+        .and_then(|formats| {
+            formats
+                .iter()
+                .find(|format| format["vcodec"].as_str() != Some("none"))
+        })
+        .unwrap_or(info);
+    let audio = formats
+        .and_then(|formats| {
+            formats
+                .iter()
+                .find(|format| format["vcodec"] == "none" && format["acodec"] != "none")
+        })
+        .and_then(|format| {
+            format["url"].as_str().map(|url| crate::ffmpeg::AudioInput {
+                url: url.to_string(),
+                headers: stream_headers(format),
+            })
+        });
+    if formats.is_some() && audio.is_none() {
+        return Err(RecorderError::Config("YouTube 未返回可用音频流".into()));
+    }
+    let url = video["url"].as_str().unwrap_or("").to_string();
+    if url.is_empty() {
+        return Err(RecorderError::NoStreamUrl);
+    }
+    // HLS (m3u8) is typical for both YouTube and Twitch lives.
+    let extension =
+        if info["protocol"].as_str().unwrap_or("").contains("m3u8") || url.contains(".m3u8") {
+            "ts"
+        } else {
+            "mkv"
+        };
+    let headers = stream_headers(video);
+    Ok(ResolvedStream {
+        url,
+        audio,
+        headers,
+        user_agent: None,
+        extension: extension.into(),
+        backup_urls: vec![],
+    })
 }
 
 /// Route an id/URL to a platform implementation.
 pub fn platform_for(id: &str, client: reqwest::Client, qn: u32) -> Box<dyn Platform> {
-    let lower = id.trim().to_lowercase();
-    if lower.contains("youtube.com")
-        || lower.contains("youtu.be")
-        || lower.contains("twitch.tv")
-        || lower.starts_with("http") && !lower.contains("bilibili.com")
-    {
+    let native = id.trim().parse::<u64>().is_ok()
+        || reqwest::Url::parse(id.trim())
+            .ok()
+            .is_some_and(|url| url.host_str() == Some("live.bilibili.com"));
+    if !native {
         Box::new(YtDlpPlatform::default())
     } else {
         Box::new(BilibiliPlatform::new(client, qn))
@@ -191,6 +265,22 @@ pub fn platform_for(id: &str, client: reqwest::Client, qn: u32) -> Box<dyn Platf
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolves_separate_video_and_audio_without_losing_audio_headers() {
+        let info = serde_json::json!({"is_live":true,"requested_formats":[
+            {"url":"https://example.test/video.m3u8","vcodec":"h264","acodec":"none"},
+            {"url":"https://example.test/audio.m3u8","vcodec":"none","acodec":"aac","http_headers":{"Referer":"https://www.youtube.com/"}}
+        ]});
+        let stream = super::resolved_info(&info).unwrap();
+        assert!(stream.url.ends_with("video.m3u8"));
+        let audio = stream.audio.unwrap();
+        assert!(audio.url.ends_with("audio.m3u8"));
+        assert_eq!(
+            audio.headers,
+            vec![("Referer".into(), "https://www.youtube.com/".into())]
+        );
+        assert!(super::resolved_info(&serde_json::json!({"is_live":false,"url":"x"})).is_err());
+    }
     use super::*;
 
     #[test]
@@ -213,7 +303,7 @@ mod tests {
         assert!(s.contains(&"%(is_live)s".to_string()));
         assert_eq!(s.last().unwrap(), "https://twitch.tv/foo");
         let r = YtDlpPlatform::resolve_args("https://youtube.com/watch?v=x");
-        assert!(r.contains(&"-g".to_string()));
+        assert!(r.contains(&"--dump-single-json".to_string()));
         assert_eq!(r.last().unwrap(), "https://youtube.com/watch?v=x");
     }
 

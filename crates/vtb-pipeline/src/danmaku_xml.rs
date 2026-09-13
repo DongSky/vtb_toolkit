@@ -48,6 +48,38 @@ pub fn to_xml(entries: &[LogEntry], session_start: DateTime<Utc>) -> String {
         let Some(time) = rel_secs(entry.received_at, session_start) else {
             continue;
         };
+        if let Some(source) = &entry.source {
+            if source.platform == vtb_common::LivePlatform::Youtube {
+                let text = match &entry.event {
+                    LiveEvent::Danmaku(d) => format!("{}: {}", d.username, d.text),
+                    LiveEvent::SuperChat(sc) => format!(
+                        "{} {}: {}",
+                        sc.username,
+                        source
+                            .money
+                            .as_ref()
+                            .map(|m| m.display.as_str())
+                            .unwrap_or("Super Chat"),
+                        sc.text
+                    ),
+                    LiveEvent::Gift(g) => format!("{}: {}", g.username, g.gift_name),
+                    LiveEvent::GuardBuy(g) => format!(
+                        "{}: {}",
+                        g.username,
+                        source.membership.as_deref().unwrap_or("频道会员")
+                    ),
+                    _ => continue,
+                };
+                let metadata = serde_json::to_string(source).unwrap_or_default();
+                out.push_str(&format!(
+                    "<d p=\"{time:.3},1,25,16777215,{},0,0,0\" vtb_source=\"{}\">{}</d>\n",
+                    entry.received_at.timestamp(),
+                    xml_escape(&metadata),
+                    xml_escape(&text)
+                ));
+                continue;
+            }
+        }
         match &entry.event {
             // p = time,mode,size,color,unix_ts,pool,uid,row — mode 1 (滚动),
             // size 25, color 16777215 (white).
@@ -94,11 +126,7 @@ pub fn to_xml(entries: &[LogEntry], session_start: DateTime<Utc>) -> String {
 }
 
 /// Write the danmaku XML for `entries` to `path`.
-pub fn write_xml(
-    entries: &[LogEntry],
-    session_start: DateTime<Utc>,
-    path: &Path,
-) -> Result<()> {
+pub fn write_xml(entries: &[LogEntry], session_start: DateTime<Utc>, path: &Path) -> Result<()> {
     std::fs::write(path, to_xml(entries, session_start))?;
     Ok(())
 }
@@ -122,6 +150,7 @@ mod tests {
     fn danmaku(offset_ms: i64, uid: u64, text: &str) -> LogEntry {
         let ts = at_ms(offset_ms);
         LogEntry {
+            source: None,
             received_at: ts,
             event: LiveEvent::Danmaku(DanmakuMsg {
                 room_id: 1,
@@ -140,6 +169,7 @@ mod tests {
     fn superchat(offset_ms: i64, uid: u64, price: f64, text: &str) -> LogEntry {
         let ts = at_ms(offset_ms);
         LogEntry {
+            source: None,
             received_at: ts,
             event: LiveEvent::SuperChat(SuperChatMsg {
                 room_id: 1,
@@ -156,6 +186,7 @@ mod tests {
     fn gift(offset_ms: i64, uid: u64, name: &str, count: u64) -> LogEntry {
         let ts = at_ms(offset_ms);
         LogEntry {
+            source: None,
             received_at: ts,
             event: LiveEvent::Gift(GiftMsg {
                 room_id: 1,
@@ -173,6 +204,7 @@ mod tests {
     fn guard(offset_ms: i64, uid: u64, level: u8, count: u64) -> LogEntry {
         let ts = at_ms(offset_ms);
         LogEntry {
+            source: None,
             received_at: ts,
             event: LiveEvent::GuardBuy(GuardBuyMsg {
                 room_id: 1,
@@ -188,10 +220,7 @@ mod tests {
 
     #[test]
     fn escapes_special_characters() {
-        assert_eq!(
-            xml_escape(r#"<&>"'"#),
-            "&lt;&amp;&gt;&quot;&apos;"
-        );
+        assert_eq!(xml_escape(r#"<&>"'"#), "&lt;&amp;&gt;&quot;&apos;");
         assert_eq!(xml_escape("弹幕"), "弹幕");
     }
 
@@ -219,9 +248,7 @@ mod tests {
     #[test]
     fn text_is_escaped_in_output() {
         let xml = to_xml(&[danmaku(0, 1, r#"A<B> & "中文" 'q'"#)], start());
-        assert!(xml.contains(
-            ">A&lt;B&gt; &amp; &quot;中文&quot; &apos;q&apos;</d>"
-        ));
+        assert!(xml.contains(">A&lt;B&gt; &amp; &quot;中文&quot; &apos;q&apos;</d>"));
         // No raw specials leak into the text node.
         assert!(!xml.contains("A<B>"));
     }
@@ -229,11 +256,19 @@ mod tests {
     #[test]
     fn superchat_extension() {
         let xml = to_xml(&[superchat(2000, 7, 30.4, "加油&<3")], start());
-        let expected = format!(
-            "<sc p=\"2.000,30,7,{}\">加油&amp;&lt;3</sc>",
-            BASE + 2
-        );
+        let expected = format!("<sc p=\"2.000,30,7,{}\">加油&amp;&lt;3</sc>", BASE + 2);
         assert!(xml.contains(&expected), "xml was:\n{xml}");
+    }
+
+    #[test]
+    fn youtube_paid_xml_preserves_currency_and_source_without_cny_extension() {
+        let mut entry = superchat(2000, 0, 20.0, "<加油>");
+        entry.source = Some(serde_json::from_value(serde_json::json!({"platform":"youtube","room_id":"video","user_id":"author","money":{"display":"HK$20.00","currency":"HKD","amount":20}})).unwrap());
+        let xml = to_xml(&[entry], start());
+        assert!(xml.contains("HK$20.00"));
+        assert!(xml.contains("&lt;加油&gt;"));
+        assert!(xml.contains("vtb_source="));
+        assert!(!xml.contains("<sc "));
     }
 
     #[test]
@@ -263,12 +298,20 @@ mod tests {
             danmaku(-2000, 1, "太早了"),
             danmaku(1000, 2, "正好"),
             LogEntry {
+                source: None,
                 received_at: ts,
-                event: LiveEvent::LiveStart { room_id: 1, timestamp: ts },
+                event: LiveEvent::LiveStart {
+                    room_id: 1,
+                    timestamp: ts,
+                },
             },
             LogEntry {
+                source: None,
                 received_at: ts,
-                event: LiveEvent::WatchedChange { room_id: 1, count: 5 },
+                event: LiveEvent::WatchedChange {
+                    room_id: 1,
+                    count: 5,
+                },
             },
         ];
         let xml = to_xml(&entries, start());

@@ -7,7 +7,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc;
 use vtb_asr::streaming::{StreamingAsr, StreamingConfig};
 use vtb_recorder::auto::{BiliResolver, StreamResolver};
 use vtb_recorder::stream::{qn, StreamApi};
@@ -17,7 +16,10 @@ pub const EVENT_SUBTITLE: &str = "subtitle://segment";
 
 #[derive(serde::Deserialize)]
 pub struct LiveSubtitleOptions {
+    #[serde(default)]
     pub room_id: u64,
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub model_path: String,
     #[serde(default)]
     pub asr_lang: Option<String>,
@@ -42,6 +44,7 @@ pub struct LiveSubtitleOptions {
 
 #[derive(serde::Serialize, Clone)]
 struct SubtitlePayload {
+    room_key: String,
     room_id: u64,
     start_ms: u64,
     end_ms: u64,
@@ -55,7 +58,7 @@ pub async fn live_subtitle_start(
     app: AppHandle,
     state: State<'_, AppState>,
     options: LiveSubtitleOptions,
-) -> Result<(), String> {
+) -> Result<String, String> {
     #[cfg(not(feature = "whisper"))]
     {
         let _ = (&app, &state, &options);
@@ -65,23 +68,47 @@ pub async fn live_subtitle_start(
     #[cfg(feature = "whisper")]
     {
         let room_id = options.room_id;
-        {
-            let subs = state.subtitles.lock().unwrap();
-            if subs.get(&room_id).map(|h| !h.is_finished()).unwrap_or(false) {
-                return Err(format!("room {room_id} subtitle already running"));
-            }
-        }
-
-        // Resolve the stream URL.
         let http = reqwest::Client::builder()
-            .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-            )
+            .user_agent("Mozilla/5.0")
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| e.to_string())?;
-        let resolver = BiliResolver::new(StreamApi::new(http), qn::FLUENT);
-        let stream = resolver.resolve(room_id).await.map_err(|e| e.to_string())?;
+        let (room_key, stream) = if let Some(url) = &options.source_url {
+            let info = super::youtube::request(
+                &app,
+                "info",
+                serde_json::json!({"input":url,"fresh":true}),
+            )
+            .await?;
+            if info["live"] != true {
+                return Err("该频道当前没有直播".into());
+            }
+            let video = info["video_id"].as_str().ok_or("无法确定正在直播的视频")?;
+            let url = format!("https://www.youtube.com/watch?v={video}");
+            let stream = vtb_recorder::platform::platform_for(&url, http, qn::FLUENT)
+                .resolve(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            (format!("youtube:{video}"), stream)
+        } else {
+            if room_id == 0 {
+                return Err("请输入 Bilibili 房间号或 YouTube 链接".into());
+            }
+            let resolver = BiliResolver::new(StreamApi::new(http), qn::FLUENT);
+            (
+                format!("bilibili:{room_id}"),
+                resolver.resolve(room_id).await.map_err(|e| e.to_string())?,
+            )
+        };
+        if state
+            .subtitles
+            .lock()
+            .unwrap()
+            .get(&room_key)
+            .is_some_and(|h| !h.is_finished())
+        {
+            return Err("该直播的字幕任务已运行".into());
+        }
 
         // ASR engine.
         let lang = match options.asr_lang.as_deref() {
@@ -90,11 +117,9 @@ pub async fn live_subtitle_start(
         };
         let (hotword_prompt, hotword_glossary) =
             super::hotwords::load_for_processing(&app, &options.hotword_tables);
-        let mut engine_raw = vtb_asr::engine::WhisperEngine::new(
-            std::path::Path::new(&options.model_path),
-            lang,
-        )
-        .map_err(|e| e.to_string())?;
+        let mut engine_raw =
+            vtb_asr::engine::WhisperEngine::new(std::path::Path::new(&options.model_path), lang)
+                .map_err(|e| e.to_string())?;
         if let Some(p) = &hotword_prompt {
             engine_raw = engine_raw.with_initial_prompt(p.clone());
         }
@@ -110,8 +135,9 @@ pub async fn live_subtitle_start(
                 options.llm_base_url.clone(),
             )?;
             let mut profile = match &options.profile_path {
-                Some(p) => StreamerProfile::load(std::path::Path::new(p))
-                    .map_err(|e| e.to_string())?,
+                Some(p) => {
+                    StreamerProfile::load(std::path::Path::new(p)).map_err(|e| e.to_string())?
+                }
                 None => StreamerProfile::default(),
             };
             super::hotwords::append_glossary(&mut profile, hotword_glossary.clone());
@@ -129,7 +155,17 @@ pub async fn live_subtitle_start(
 
         // ffmpeg: stream URL → 16k mono s16le on stdout.
         let mut headers = String::new();
-        for (k, v) in &stream.headers {
+        let audio_url = stream
+            .audio
+            .as_ref()
+            .map(|audio| audio.url.as_str())
+            .unwrap_or(&stream.url);
+        let audio_headers = stream
+            .audio
+            .as_ref()
+            .map(|audio| &audio.headers)
+            .unwrap_or(&stream.headers);
+        for (k, v) in audio_headers {
             headers.push_str(&format!("{k}: {v}\r\n"));
         }
         let mut cmd = tokio::process::Command::new("ffmpeg");
@@ -140,16 +176,19 @@ pub async fn live_subtitle_start(
         if !headers.is_empty() {
             cmd.args(["-headers", &headers]);
         }
-        cmd.args(["-i", &stream.url])
+        cmd.args(["-i", audio_url])
             .args(["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"])
             .stdout(Stdio::piped())
             .stdin(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
         let mut child = cmd.spawn().map_err(|e| format!("spawn ffmpeg: {e}"))?;
         let mut stdout = child.stdout.take().ok_or("no ffmpeg stdout")?;
 
         let app2 = app.clone();
         let publisher = state.overlay_publisher.clone();
+        let task_key = room_key.clone();
         let task = tokio::spawn(async move {
             let _child = child; // keep alive; kill_on_drop stops ffmpeg on abort
             let mut asr = StreamingAsr::new(engine, StreamingConfig::default());
@@ -165,13 +204,16 @@ pub async fn live_subtitle_start(
                             .collect();
                         for seg in asr.feed(&pcm).await {
                             let translated = match &mut translator {
-                                Some(t) if t.should_translate(&seg) => {
-                                    t.translate_segment(&seg).await.ok().map(|x| x.translated_text)
-                                }
+                                Some(t) if t.should_translate(&seg) => t
+                                    .translate_segment(&seg)
+                                    .await
+                                    .ok()
+                                    .map(|x| x.translated_text),
                                 _ => None,
                             };
                             // Mirror to the OBS subtitle bar.
                             publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                                room_key: Some(task_key.clone()),
                                 text: seg.text.clone(),
                                 translated: translated.clone(),
                                 lang: seg.lang.clone(),
@@ -179,6 +221,7 @@ pub async fn live_subtitle_start(
                             let _ = app2.emit(
                                 EVENT_SUBTITLE,
                                 SubtitlePayload {
+                                    room_key: task_key.clone(),
                                     room_id,
                                     start_ms: seg.start_ms,
                                     end_ms: seg.end_ms,
@@ -194,6 +237,7 @@ pub async fn live_subtitle_start(
             }
             for seg in asr.finish().await {
                 publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                    room_key: Some(task_key.clone()),
                     text: seg.text.clone(),
                     translated: None,
                     lang: seg.lang.clone(),
@@ -201,6 +245,7 @@ pub async fn live_subtitle_start(
                 let _ = app2.emit(
                     EVENT_SUBTITLE,
                     SubtitlePayload {
+                        room_key: task_key.clone(),
                         room_id,
                         start_ms: seg.start_ms,
                         end_ms: seg.end_ms,
@@ -210,23 +255,50 @@ pub async fn live_subtitle_start(
                     },
                 );
             }
-            publisher.publish(vtb_overlay::OverlayMessage::SubtitleClear);
+            publisher.publish(vtb_overlay::OverlayMessage::SubtitleClearSource {
+                room_key: task_key.clone(),
+            });
+            let _ = app2.emit("subtitle://ended", &task_key);
         });
 
-        state.subtitles.lock().unwrap().insert(room_id, task);
-        Ok(())
+        let mut subs = state.subtitles.lock().unwrap();
+        if subs.get(&room_key).is_some_and(|h| !h.is_finished()) {
+            task.abort();
+            return Err("该直播的字幕任务已运行".into());
+        }
+        subs.insert(room_key.clone(), task);
+        Ok(room_key)
     }
 }
 
 #[tauri::command]
 pub async fn live_subtitle_stop(
+    app: AppHandle,
     state: State<'_, AppState>,
-    room_id: u64,
+    room_id: Option<u64>,
+    source: Option<String>,
 ) -> Result<(), String> {
-    if let Some(task) = state.subtitles.lock().unwrap().remove(&room_id) {
+    let key = source.unwrap_or_else(|| format!("bilibili:{}", room_id.unwrap_or(0)));
+    if let Some(task) = state.subtitles.lock().unwrap().remove(&key) {
         task.abort();
-        Ok(())
-    } else {
-        Err(format!("room {room_id} subtitle not running"))
+        state
+            .overlay_publisher
+            .publish(vtb_overlay::OverlayMessage::SubtitleClearSource {
+                room_key: key.clone(),
+            });
+        let _ = app.emit("subtitle://ended", &key);
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn live_subtitle_status(state: State<'_, AppState>) -> Vec<String> {
+    state
+        .subtitles
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, h)| !h.is_finished())
+        .map(|(k, _)| k.clone())
+        .collect()
 }

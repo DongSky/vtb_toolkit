@@ -160,12 +160,9 @@ pub async fn danmaku_connect(
                                     "danmaku",
                                     note.or_else(|| Some(format!("{} 打点", d.username))),
                                 );
-                                if let Err(e) = super::markers::add_marker(
-                                    &app2,
-                                    &marker_dirs,
-                                    room_id,
-                                    marker,
-                                ) {
+                                if let Err(e) =
+                                    super::markers::add_marker(&app2, &marker_dirs, room_id, marker)
+                                {
                                     tracing::debug!("danmaku marker skipped: {e}");
                                 }
                             }
@@ -213,10 +210,12 @@ pub async fn danmaku_connect(
                     }
                     // Mirror to the OBS overlay (no-op when not running).
                     publisher.publish(vtb_overlay::OverlayMessage::Danmaku {
+                        source: None,
                         event: live.clone(),
                         tid,
                     });
-                    app2.emit(EVENT_DANMAKU, DanmakuEmit { event: &live, tid }).is_ok()
+                    app2.emit(EVENT_DANMAKU, DanmakuEmit { event: &live, tid })
+                        .is_ok()
                 }
                 ManagedEvent::State(s) => {
                     let done = matches!(s, ConnState::Stopped);
@@ -239,10 +238,7 @@ pub async fn danmaku_connect(
 }
 
 #[tauri::command]
-pub async fn danmaku_disconnect(
-    state: State<'_, AppState>,
-    room_id: u64,
-) -> Result<(), String> {
+pub async fn danmaku_disconnect(state: State<'_, AppState>, room_id: u64) -> Result<(), String> {
     if let Some(handles) = state.danmaku.lock().unwrap().remove(&room_id) {
         // Graceful: the supervisor exits its loop and emits Stopped, which
         // ends the pump. Abort as a backstop.
@@ -255,9 +251,7 @@ pub async fn danmaku_disconnect(
 }
 
 #[tauri::command]
-pub async fn danmaku_status(
-    state: State<'_, AppState>,
-) -> Result<Vec<u64>, String> {
+pub async fn danmaku_status(state: State<'_, AppState>) -> Result<Vec<u64>, String> {
     let map = state.danmaku.lock().unwrap();
     Ok(map
         .iter()

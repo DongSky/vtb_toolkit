@@ -1,5 +1,35 @@
 // TypeScript mirrors of the Rust vtb-common types (serde snake_case tagged).
 
+export interface EventSource {
+  platform: "bilibili" | "youtube" | "twitch";
+  room_id: string;
+  user_id?: string | null;
+  message_id?: string | null;
+  avatar_url?: string | null;
+  money?: { currency: string | null; amount: number | null; display: string } | null;
+  membership?: string | null;
+  sticker_url?: string | null;
+  event_type?: string | null;
+  message_runs?: { text: string; emoji_url?: string | null }[];
+}
+
+export function roomKey(event: LiveEvent): string {
+  return event.source ? `${event.source.platform}:${event.source.room_id}` : `bilibili:${event.room_id}`;
+}
+
+export interface ChatDelete {
+  room_key: string;
+  message_id?: string | null;
+  user_id?: string | null;
+}
+
+export function isDeleted(event: LiveEvent, deletion: ChatDelete): boolean {
+  return roomKey(event) === deletion.room_key && Boolean(
+    (deletion.message_id && event.source?.message_id === deletion.message_id) ||
+    (deletion.user_id && event.source?.user_id === deletion.user_id),
+  );
+}
+
 export interface Medal {
   name: string;
   level: number;
@@ -69,6 +99,7 @@ export type LiveEvent = (
 ) & {
   /** Translation correlation id (present when 弹幕自动翻译 is running). */
   tid?: number;
+  source?: EventSource | null;
 };
 
 export interface DanmakuTranslationPayload {

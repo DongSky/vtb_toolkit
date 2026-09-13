@@ -1,3 +1,4 @@
+import { t, tm, useLocale } from "../i18n";
 import { useEffect, useState } from "react";
 import { usePersisted } from "../hooks/usePersisted";
 import { invoke } from "@tauri-apps/api/core";
@@ -6,6 +7,7 @@ import type { RecorderEventPayload } from "../types";
 import NotifySettings from "./NotifySettings";
 
 export default function RecorderPanel() {
+  useLocale();
   const [roomId, setRoomId] = usePersisted("rec.room", "");
   const [outputDir, setOutputDir] = usePersisted("rec.outputDir", "");
   const [segmentMode, setSegmentMode] = usePersisted("rec.segmentMode", "duration");
@@ -20,7 +22,7 @@ export default function RecorderPanel() {
     target_free_gib: 0,
   });
   const [active, setActive] = useState<number[]>([]);
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<{ prefix?: string; message: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   // 多平台 (YouTube/Twitch via yt-dlp)
   const [platformUrl, setPlatformUrl] = usePersisted("rec.platformUrl", "");
@@ -46,7 +48,7 @@ export default function RecorderPanel() {
           : p.kind === "stopped"
             ? `房间 ${p.room_id} 录制结束（${p.segments} 段, ${((p.total_bytes ?? 0) / 1048576).toFixed(1)} MB）`
             : `房间 ${p.room_id} 错误: ${p.message}`;
-      setLog((l) => [...l.slice(-99), line]);
+      setLog((l) => [...l.slice(-99), { message: line }]);
       refresh();
     });
     const unP = listen<{ id: string; kind: string; message: string }>(
@@ -54,7 +56,7 @@ export default function RecorderPanel() {
       (e) => {
         setLog((l) => [
           ...l.slice(-99),
-          `[${e.payload.kind}] ${e.payload.id}: ${e.payload.message}`,
+          { prefix: `[${e.payload.kind}] ${e.payload.id}: `, message: e.payload.message },
         ]);
         refresh();
       },
@@ -71,6 +73,8 @@ export default function RecorderPanel() {
       await invoke("platform_record_start", {
         id: platformUrl,
         outputDir: outputDir,
+        segmentMode,
+        segmentValue: Number(segmentValue) || undefined,
       });
       refresh();
     } catch (e) {
@@ -106,17 +110,17 @@ export default function RecorderPanel() {
 
   return (
     <div className="panel" data-testid="recorder-panel">
-      <h2>自动录制</h2>
+      <h2>{t("自动录制")}</h2>
       <div className="form-row">
         <input
           data-testid="rec-room"
-          placeholder="房间号"
+          placeholder={t("房间号")}
           value={roomId}
           onChange={(e) => setRoomId(e.target.value)}
         />
         <input
           data-testid="rec-dir"
-          placeholder="输出目录"
+          placeholder={t("输出目录")}
           value={outputDir}
           onChange={(e) => setOutputDir(e.target.value)}
         />
@@ -125,9 +129,9 @@ export default function RecorderPanel() {
           value={segmentMode}
           onChange={(e) => setSegmentMode(e.target.value)}
         >
-          <option value="single">不切分</option>
-          <option value="duration">按时长(秒)</option>
-          <option value="size">按大小(字节)</option>
+          <option value="single">{t("不切分")}</option>
+          <option value="duration">{t("按时长(秒)")}</option>
+          <option value="size">{t("按大小(字节)")}</option>
         </select>
         {segmentMode !== "single" && (
           <input
@@ -141,26 +145,24 @@ export default function RecorderPanel() {
           disabled={!roomId || !outputDir}
           onClick={start}
         >
-          开始监听
-        </button>
+          {t("开始监听")}{" "}</button>
       </div>
       {error && (
         <div className="error" data-testid="rec-error">
-          {error}
+          {tm(error)}
         </div>
       )}
       <ul data-testid="rec-active">
         {active.map((id) => (
           <li key={id}>
-            房间 {id} 监听中
-            <button onClick={() => stop(id)}>停止</button>
+            {t("房间 {0} 监听中", id)}{" "}<button onClick={() => stop(id)}>{t("停止")}</button>
           </li>
         ))}
       </ul>
       <div className="form-row" data-testid="rec-platform">
         <input
           data-testid="rec-platform-url"
-          placeholder="YouTube/Twitch 直播 URL（需安装 yt-dlp）"
+          placeholder={t("YouTube/Twitch 直播 URL（需安装 yt-dlp）")}
           style={{ flex: 1 }}
           value={platformUrl}
           onChange={(e) => setPlatformUrl(e.target.value)}
@@ -170,8 +172,7 @@ export default function RecorderPanel() {
           disabled={!platformUrl.trim() || !outputDir}
           onClick={startPlatform}
         >
-          监听录制
-        </button>
+          {t("监听录制")}{" "}</button>
         {platformActive.map((k) => (
           <span key={k}>
             {k}
@@ -182,16 +183,14 @@ export default function RecorderPanel() {
                   .catch((e) => setError(String(e)))
               }
             >
-              停止
-            </button>
+              {t("停止")}{" "}</button>
           </span>
         ))}
       </div>
       <div className="form-row" data-testid="rec-retention">
-        <span>滚动清理（0=关闭）:</span>
+        <span>{t("滚动清理（0=关闭）:")}</span>
         <label>
-          保留天数
-          <input
+          {t("保留天数")}{" "}<input
             data-testid="rec-retention-days"
             type="number"
             min={0}
@@ -203,8 +202,7 @@ export default function RecorderPanel() {
           />
         </label>
         <label>
-          每房间场次
-          <input
+          {t("每房间场次")}{" "}<input
             data-testid="rec-retention-sessions"
             type="number"
             min={0}
@@ -219,8 +217,7 @@ export default function RecorderPanel() {
           />
         </label>
         <label>
-          目标剩余(GiB)
-          <input
+          {t("目标剩余(GiB)")}{" "}<input
             data-testid="rec-retention-free"
             type="number"
             min={0}
@@ -237,7 +234,7 @@ export default function RecorderPanel() {
       </div>
       <NotifySettings />
       <pre className="log" data-testid="rec-log">
-        {log.join("\n")}
+        {log.map((entry) => (entry.prefix ?? "") + tm(entry.message)).join("\n")}
       </pre>
     </div>
   );

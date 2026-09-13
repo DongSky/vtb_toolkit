@@ -80,7 +80,7 @@ describe("DanmakuPanel", () => {
 
   it("打点 button targets the active recording room and toasts on marker events", async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === "marker_rooms") return Promise.resolve([320]);
+      if (cmd === "marker_sources") return Promise.resolve(["bilibili:320"]);
       if (cmd === "danmaku_status" || cmd === "danmaku_timer_status")
         return Promise.resolve([]);
       if (cmd === "danmaku_translate_status") return Promise.resolve(null);
@@ -96,8 +96,8 @@ describe("DanmakuPanel", () => {
     });
     fireEvent.click(screen.getByTestId("dm-marker-add"));
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("marker_add", {
-        roomId: 320,
+      expect(invokeMock).toHaveBeenCalledWith("marker_add_source", {
+        key: "bilibili:320",
         note: "名场面",
       }),
     );
@@ -109,7 +109,7 @@ describe("DanmakuPanel", () => {
     });
     await waitFor(() =>
       expect(screen.getByTestId("dm-marker-toast")).toHaveTextContent(
-        "已打点 房间320",
+        "已打点 bilibili:320",
       ),
     );
   });
@@ -328,6 +328,8 @@ describe("OfflinePanel", () => {
     fireEvent.change(screen.getByTestId("off-model"), {
       target: { value: "/models/ggml-small.bin" },
     });
+    fireEvent.click(screen.getByTestId("off-semantic-highlights"));
+    fireEvent.click(screen.getByTestId("off-visual-highlights"));
     fireEvent.click(screen.getByTestId("off-start"));
     await waitFor(() =>
       expect(
@@ -337,6 +339,12 @@ describe("OfflinePanel", () => {
     const call = invokeMock.mock.calls.find((c) => c[0] === "offline_process")!;
     expect(call[1].options.input).toBe("/rec/full.flv");
     expect(call[1].options.model_path).toBe("/models/ggml-small.bin");
+    expect(call[1].options.semantic_highlights).toBe(true);
+    expect(call[1].options.visual_highlights).toBe(true);
+    expect(call[1].options.ai_pre_roll_secs).toBe(8);
+    expect(call[1].options.ai_post_roll_secs).toBe(12);
+    expect(call[1].options.visual_sample_secs).toBe(20);
+    expect(call[1].options.ai_max_clips).toBe(24);
 
     listenHandlers["job://progress"]({
       payload: {

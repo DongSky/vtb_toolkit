@@ -27,25 +27,28 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 /// originals in the parent (recorder layout) over remuxed mp4 duplicates.
 /// Shared by review_load / edl_export / the editor-export commands.
 pub(crate) fn discover_source_video(dir: &Path) -> Option<PathBuf> {
-    dir.parent()
-        .and_then(|p| std::fs::read_dir(p).ok())
-        .and_then(|rd| {
-            let mut media: Vec<PathBuf> = rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
-                        .unwrap_or(false)
-                })
-                .collect();
-            media.sort();
-            media
-                .iter()
-                .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
-                .cloned()
-                .or_else(|| media.into_iter().next())
+    std::iter::once(dir)
+        .chain(dir.parent())
+        .find_map(|directory| {
+            std::fs::read_dir(directory).ok().and_then(|rd| {
+                let mut media: Vec<PathBuf> = rd
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.metadata().is_ok_and(|m| m.is_file() && m.len() > 0)
+                            && p.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| matches!(e, "flv" | "mp4" | "ts" | "mkv"))
+                                .unwrap_or(false)
+                    })
+                    .collect();
+                media.sort();
+                media
+                    .iter()
+                    .find(|p| p.extension().map(|e| e != "mp4").unwrap_or(false))
+                    .cloned()
+                    .or_else(|| media.into_iter().next())
+            })
         })
 }
 
@@ -71,7 +74,16 @@ pub async fn review_load(dir: String) -> Result<ReviewData, String> {
 
     // Find a likely source video: parent dir media files (recorder layout
     // puts out/ next to rec.flv / parts).
-    let video = discover_source_video(&dir).map(|p| p.to_string_lossy().into_owned());
+    let video = discover_source_video(&dir).map(|p| {
+        // WebView2 can play the recorder's remuxed MP4 directly.
+        let mp4 = p.with_extension("mp4");
+        let preview = if mp4.metadata().is_ok_and(|m| m.len() > 0) {
+            mp4
+        } else {
+            p
+        };
+        preview.to_string_lossy().into_owned()
+    });
 
     Ok(ReviewData {
         signals,
@@ -96,7 +108,7 @@ pub async fn clip_export(
         input: PathBuf::from(&input),
         output_dir: PathBuf::from(&output_dir),
         reencode: false,
-            burn_subtitles: None,
+        burn_subtitles: None,
     };
     let h = Highlight {
         start_ms,
@@ -144,4 +156,28 @@ pub async fn edl_export(dir: String) -> Result<String, String> {
     let out = dir.join("highlights.edl");
     std::fs::write(&out, edl).map_err(|e| e.to_string())?;
     Ok(out.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_and_analysis_directories_preview_remuxed_video() {
+        let session = tempfile::tempdir().unwrap();
+        let output = session.path().join("out");
+        std::fs::create_dir(&output).unwrap();
+        let mkv = session.path().join("recording-p00_000.mkv");
+        let mp4 = mkv.with_extension("mp4");
+        std::fs::write(&mkv, b"original").unwrap();
+        std::fs::write(&mp4, b"remux").unwrap();
+        std::fs::write(session.path().join("recording-p00.mkv"), b"").unwrap();
+        for dir in [session.path(), output.as_path()] {
+            assert_eq!(discover_source_video(dir), Some(mkv.clone()));
+            let data = review_load(dir.to_string_lossy().into_owned())
+                .await
+                .unwrap();
+            assert_eq!(data.video, Some(mp4.to_string_lossy().into_owned()));
+        }
+    }
 }

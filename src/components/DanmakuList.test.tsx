@@ -23,6 +23,15 @@ function danmaku(text: string, extra: Partial<LiveEvent> = {}): LiveEvent {
 }
 
 describe("DanmakuList", () => {
+  it("scrolls only the comment container even after the row limit is reached", () => {
+    const pageTop = document.documentElement.scrollTop;
+    const { rerender } = render(<DanmakuList events={[danmaku("第一条")]} theme={theme} maxRows={1} />);
+    const list = screen.getByTestId("dm-list");
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 800 });
+    rerender(<DanmakuList events={[danmaku("最新一条")]} theme={theme} maxRows={1} />);
+    expect(list.scrollTop).toBe(800);
+    expect(document.documentElement.scrollTop).toBe(pageTop);
+  });
   it("renders plain danmaku with username and text", () => {
     render(<DanmakuList events={[danmaku("你好")]} theme={theme} />);
     expect(screen.getByText("观众A:")).toBeInTheDocument();

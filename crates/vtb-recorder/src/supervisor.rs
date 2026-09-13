@@ -24,6 +24,8 @@ pub struct SupervisorConfig {
     pub segment: SegmentPolicy,
     /// No output growth for this long → stalled, restart with a new URL.
     pub stall_timeout: Duration,
+    /// Optional longer allowance before the first output byte (adaptive HLS).
+    pub startup_timeout: Duration,
     /// A (re)start ending sooner than this counts as a rapid failure.
     pub min_healthy: Duration,
     /// Give up after this many consecutive rapid failures.
@@ -52,7 +54,10 @@ impl std::fmt::Debug for SupervisorConfig {
             .field("max_rapid_failures", &self.max_rapid_failures)
             .field("extension_override", &self.extension_override)
             .field("min_free_bytes", &self.min_free_bytes)
-            .field("free_space_fn", &self.free_space_fn.as_ref().map(|_| "<fn>"))
+            .field(
+                "free_space_fn",
+                &self.free_space_fn.as_ref().map(|_| "<fn>"),
+            )
             .field("pcm_tx", &self.pcm_tx.as_ref().map(|_| "<tx>"))
             .finish()
     }
@@ -66,6 +71,7 @@ impl SupervisorConfig {
             stem_base: stem_base.into(),
             segment: SegmentPolicy::Single,
             stall_timeout: Duration::from_secs(15),
+            startup_timeout: Duration::ZERO,
             min_healthy: Duration::from_secs(10),
             max_rapid_failures: 3,
             extension_override: None,
@@ -131,7 +137,11 @@ pub async fn supervise_recording<R: StreamResolver>(
                 ..last_stream_shell(&last_resolved)
             }
         } else {
-            match resolver.resolve(config.room_id).await {
+            let resolved = tokio::select! {
+                result = resolver.resolve(config.room_id) => result,
+                _ = stop.changed() => return SupervisorEnd::Stopped,
+            };
+            match resolved {
                 Ok(s) => {
                     backup_lines = s.backup_urls.iter().cloned().collect();
                     last_resolved = Some(s.clone());
@@ -181,7 +191,12 @@ pub async fn supervise_recording<R: StreamResolver>(
             RunEnd::DiskFull(free) => format!("disk full: {free} bytes free"),
         };
         if let Some(n) = &notes {
-            let _ = n.send(SupervisorNote::PartEnded { part, reason: reason.clone() }).await;
+            let _ = n
+                .send(SupervisorNote::PartEnded {
+                    part,
+                    reason: reason.clone(),
+                })
+                .await;
         }
 
         match end {
@@ -217,6 +232,7 @@ pub async fn supervise_recording<R: StreamResolver>(
 fn last_stream_shell(last: &Option<ResolvedStream>) -> ResolvedStream {
     match last {
         Some(s) => ResolvedStream {
+            audio: s.audio.clone(),
             url: String::new(),
             headers: s.headers.clone(),
             user_agent: s.user_agent.clone(),
@@ -224,6 +240,7 @@ fn last_stream_shell(last: &Option<ResolvedStream>) -> ResolvedStream {
             backup_urls: vec![],
         },
         None => ResolvedStream {
+            audio: None,
             url: String::new(),
             headers: vec![],
             user_agent: None,
@@ -242,6 +259,7 @@ fn build_opts(config: &SupervisorConfig, stream: &ResolvedStream, stem: &str) ->
         .unwrap_or_else(|| stream.extension.clone());
     opts.segment = config.segment.clone();
     opts.headers = stream.headers.clone();
+    opts.audio_input = stream.audio.clone();
     opts.user_agent = stream.user_agent.clone();
     opts
 }
@@ -277,7 +295,7 @@ async fn run_with_watchdog(
                 if size > last_size {
                     last_size = size;
                     last_growth = tokio::time::Instant::now();
-                } else if last_growth.elapsed() >= config.stall_timeout {
+                } else if last_growth.elapsed() >= if last_size == 0 { config.startup_timeout.max(config.stall_timeout) } else { config.stall_timeout } {
                     graceful_stop(&mut child).await;
                     return RunEnd::Stalled;
                 }
@@ -326,13 +344,27 @@ fn total_output_bytes(opts: &RecordOptions) -> u64 {
     crate::ffmpeg::list_outputs(opts)
         .unwrap_or_default()
         .iter()
-        .filter_map(|p| std::fs::metadata(p).ok())
+        // Windows path/directory metadata can lag behind an open writer.
+        // Query a file handle so a growing recording isn't marked stalled.
+        .filter_map(|p| std::fs::File::open(p).and_then(|f| f.metadata()).ok())
         .map(|m| m.len())
         .sum()
 }
 
 /// SIGINT first so ffmpeg finalizes the container; SIGKILL as backstop.
 pub async fn graceful_stop(child: &mut tokio::process::Child) {
+    // ffmpeg's q command also finalizes containers on Windows.
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        if stdin.write_all(b"q\n").await.is_ok()
+            // Allow the 15-second HTTP read timeout to finish before force-kill.
+            && tokio::time::timeout(Duration::from_secs(20), child.wait())
+                .await
+                .is_ok()
+        {
+            return;
+        }
+    }
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         unsafe {
@@ -353,7 +385,11 @@ pub async fn graceful_stop(child: &mut tokio::process::Child) {
 pub fn session_outputs(output_dir: &Path, stem_base: &str, extension: &str) -> Vec<PathBuf> {
     let mut opts = RecordOptions::new("", output_dir, stem_base);
     opts.extension = extension.into();
-    crate::ffmpeg::list_outputs(&opts).unwrap_or_default()
+    crate::ffmpeg::list_outputs(&opts)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() > 0))
+        .collect()
 }
 
 #[cfg(test)]
@@ -364,6 +400,29 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn watchdog_observes_growth_while_writer_is_still_open() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let opts = RecordOptions::new("", dir.path(), "open");
+        let mut writer = std::fs::File::create(dir.path().join("open.flv")).unwrap();
+        assert_eq!(total_output_bytes(&opts), 0);
+        for expected in 1..=3 {
+            writer.write_all(&[42; 4096]).unwrap();
+            writer.flush().unwrap();
+            assert_eq!(total_output_bytes(&opts), expected * 4096);
+        }
+    }
+
+    #[test]
+    fn session_outputs_exclude_empty_initialization_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = dir.path().join("recording-p00_000.mkv");
+        std::fs::write(&valid, b"video").unwrap();
+        std::fs::write(dir.path().join("recording-p01_000.mkv"), b"").unwrap();
+        assert_eq!(session_outputs(dir.path(), "recording", "mkv"), vec![valid]);
+    }
 
     struct CountingResolver {
         calls: Arc<AtomicU32>,
@@ -378,6 +437,7 @@ mod tests {
                 return Err(crate::error::RecorderError::NoStreamUrl);
             }
             Ok(ResolvedStream {
+                audio: None,
                 url: "ignored".into(),
                 headers: vec![],
                 user_agent: None,
@@ -397,6 +457,7 @@ mod tests {
         async fn resolve(&self, _room_id: u64) -> Result<ResolvedStream> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(ResolvedStream {
+                audio: None,
                 url: "primary".into(),
                 headers: vec![("Referer".into(), "https://x/".into())],
                 user_agent: None,
@@ -408,21 +469,16 @@ mod tests {
 
     /// Fake "ffmpeg" that exits immediately (simulating a dead CDN line).
     fn failing_recorder(dir: &Path) -> FfmpegRecorder {
-        let script = dir.join("fake-fail.sh");
-        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        FfmpegRecorder::new(script)
+        crate::test_process::recorder(dir, 0, true, false)
     }
 
     #[tokio::test]
     async fn backup_lines_consumed_before_re_resolving() {
         let dir = tempfile::tempdir().unwrap();
         let calls = Arc::new(AtomicU32::new(0));
-        let resolver = BackupResolver { calls: calls.clone() };
+        let resolver = BackupResolver {
+            calls: calls.clone(),
+        };
         let recorder = failing_recorder(dir.path());
 
         let mut cfg = SupervisorConfig::new(1, dir.path(), "sess");
@@ -432,7 +488,10 @@ mod tests {
         let (_stop_tx, stop_rx) = watch::channel(false);
         let end = supervise_recording(&resolver, &recorder, &cfg, stop_rx, None).await;
 
-        assert!(matches!(end, SupervisorEnd::GaveUp { failures: 4, .. }), "{end:?}");
+        assert!(
+            matches!(end, SupervisorEnd::GaveUp { failures: 4, .. }),
+            "{end:?}"
+        );
         // Runs: resolve#1(primary) → backup-1 → backup-2 → resolve#2 = 4
         // failures with only TWO resolver calls (backups consumed first).
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -442,28 +501,39 @@ mod tests {
     /// seconds, then sleeps forever (simulating a stalled stream). Traps
     /// INT/TERM so graceful stop is prompt. Unique path per call.
     fn stalling_recorder(dir: &Path, write_secs: u32) -> FfmpegRecorder {
-        let script = dir.join(format!("fake-stall-{}.sh", std::process::id()));
-        // The last CLI arg is the output path (matches build_args layout).
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\ntrap 'exit 0' INT TERM\nout=$(eval echo \\${{$#}})\nfor i in $(seq 1 {write_secs}); do\n  echo data >> \"$out\"\n  sleep 1\ndone\nsleep 300\n"
-            ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        FfmpegRecorder::new(script)
+        crate::test_process::recorder(dir, write_secs, false, false)
+    }
+
+    #[tokio::test]
+    async fn slow_initial_manifest_is_not_treated_as_an_established_stream_stall() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let resolver = CountingResolver {
+            calls: calls.clone(),
+            fail: false,
+        };
+        let recorder = stalling_recorder(dir.path(), 0);
+        let mut config = SupervisorConfig::new(1, dir.path(), "starting");
+        config.stall_timeout = Duration::from_secs(1);
+        config.startup_timeout = Duration::from_secs(10);
+        let (stop, receiver) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            supervise_recording(&resolver, &recorder, &config, receiver, None).await
+        });
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        stop.send(true).unwrap();
+        assert_eq!(task.await.unwrap(), SupervisorEnd::Stopped);
     }
 
     #[tokio::test]
     async fn stall_triggers_restart_with_new_resolve() {
         let dir = tempfile::tempdir().unwrap();
         let calls = Arc::new(AtomicU32::new(0));
-        let resolver = CountingResolver { calls: calls.clone(), fail: false };
+        let resolver = CountingResolver {
+            calls: calls.clone(),
+            fail: false,
+        };
         let recorder = stalling_recorder(dir.path(), 2);
 
         let mut cfg = SupervisorConfig::new(1, dir.path(), "sess");
@@ -476,9 +546,7 @@ mod tests {
 
         let sup = tokio::spawn({
             let cfg = cfg.clone();
-            async move {
-                supervise_recording(&resolver, &recorder, &cfg, stop_rx, Some(ntx)).await
-            }
+            async move { supervise_recording(&resolver, &recorder, &cfg, stop_rx, Some(ntx)).await }
         });
 
         // Wait until the second part starts (proves stall → restart).
@@ -521,7 +589,10 @@ mod tests {
     #[tokio::test]
     async fn resolver_failures_give_up_after_budget() {
         let dir = tempfile::tempdir().unwrap();
-        let resolver = CountingResolver { calls: Arc::new(AtomicU32::new(0)), fail: true };
+        let resolver = CountingResolver {
+            calls: Arc::new(AtomicU32::new(0)),
+            fail: true,
+        };
         let recorder = FfmpegRecorder::new("/nonexistent-ffmpeg");
         let mut cfg = SupervisorConfig::new(1, dir.path(), "s");
         cfg.max_rapid_failures = 2;
@@ -537,7 +608,10 @@ mod tests {
     async fn low_disk_space_stops_recording_without_retry() {
         let dir = tempfile::tempdir().unwrap();
         let calls = Arc::new(AtomicU32::new(0));
-        let resolver = CountingResolver { calls: calls.clone(), fail: false };
+        let resolver = CountingResolver {
+            calls: calls.clone(),
+            fail: false,
+        };
         let recorder = stalling_recorder(dir.path(), 300); // healthy writer
 
         let mut cfg = SupervisorConfig::new(1, dir.path(), "disk");
@@ -581,24 +655,16 @@ mod tests {
     /// Fake ffmpeg that writes the file AND streams bytes to stdout,
     /// mimicking tee_audio_pcm mode.
     fn stdout_recorder(dir: &Path) -> FfmpegRecorder {
-        let script = dir.join(format!("fake-stdout-{}.sh", std::process::id()));
-        std::fs::write(
-            &script,
-            "#!/bin/sh\ntrap 'exit 0' INT TERM\nout=$(eval echo \\${$#})\nwhile true; do\n  echo data >> \"$out\"\n  head -c 16000 /dev/zero\n  sleep 1\ndone\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        FfmpegRecorder::new(script)
+        crate::test_process::recorder(dir, 300, false, true)
     }
 
     #[tokio::test]
     async fn pcm_tee_forwards_audio_chunks() {
         let dir = tempfile::tempdir().unwrap();
-        let resolver = CountingResolver { calls: Arc::new(AtomicU32::new(0)), fail: false };
+        let resolver = CountingResolver {
+            calls: Arc::new(AtomicU32::new(0)),
+            fail: false,
+        };
         let recorder = stdout_recorder(dir.path());
         let (pcm_tx, mut pcm_rx) = tokio::sync::mpsc::channel(16);
         let mut cfg = SupervisorConfig::new(1, dir.path(), "pcm");
@@ -615,17 +681,26 @@ mod tests {
             .expect("pcm chunk timely")
             .expect("channel open");
         assert_eq!(chunk.len(), 8000);
-        assert!(chunk.iter().all(|s| *s == 0.0), "silence expected from /dev/zero");
+        assert!(
+            chunk.iter().all(|s| *s == 0.0),
+            "silence expected from /dev/zero"
+        );
 
         stop_tx.send(true).unwrap();
-        let end = tokio::time::timeout(Duration::from_secs(15), sup).await.unwrap().unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(15), sup)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(end, SupervisorEnd::Stopped);
     }
 
     #[tokio::test]
     async fn stop_during_recording_is_prompt() {
         let dir = tempfile::tempdir().unwrap();
-        let resolver = CountingResolver { calls: Arc::new(AtomicU32::new(0)), fail: false };
+        let resolver = CountingResolver {
+            calls: Arc::new(AtomicU32::new(0)),
+            fail: false,
+        };
         let recorder = stalling_recorder(dir.path(), 300); // writes "forever"
         let cfg = SupervisorConfig::new(1, dir.path(), "s");
         let (stop_tx, stop_rx) = watch::channel(false);

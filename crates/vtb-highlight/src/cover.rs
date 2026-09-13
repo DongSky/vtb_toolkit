@@ -36,13 +36,19 @@ pub async fn extract_candidates(
     out_dir: &Path,
 ) -> Result<Vec<CoverFrame>> {
     if highlights.is_empty() {
-        return Err(HighlightError::Config("没有高能片段，无法抽取候选帧".into()));
+        return Err(HighlightError::Config(
+            "没有高能片段，无法抽取候选帧".into(),
+        ));
     }
     std::fs::create_dir_all(out_dir)?;
 
     // Top-N by score, keeping (index, highlight).
     let mut ranked: Vec<(usize, &Highlight)> = highlights.iter().enumerate().collect();
-    ranked.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.sort_by(|a, b| {
+        b.1.score
+            .partial_cmp(&a.1.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     ranked.truncate(top_n.max(1));
 
     let mut frames = Vec::new();
@@ -210,7 +216,11 @@ pub struct ImageGenConfig {
 }
 
 impl ImageGenConfig {
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             api_key: api_key.into(),
@@ -232,7 +242,11 @@ pub struct ImageGenClient {
 }
 
 fn guess_mime(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+    {
         Some(ref e) if e == "png" => "image/png",
         Some(ref e) if e == "webp" => "image/webp",
         _ => "image/jpeg",
@@ -262,6 +276,15 @@ async fn decode_item(http: &reqwest::Client, item: &serde_json::Value) -> Result
 }
 
 impl ImageGenClient {
+    fn request(&self, endpoint: &str) -> reqwest::RequestBuilder {
+        let request = self.http.post(self.config.endpoint(endpoint));
+        if self.config.api_key.is_empty() {
+            request
+        } else {
+            request.bearer_auth(&self.config.api_key)
+        }
+    }
+
     pub fn new(config: ImageGenConfig) -> Self {
         Self {
             // Image generation is slow; allow minutes, not the default.
@@ -285,9 +308,7 @@ impl ImageGenClient {
         n: u32,
     ) -> Result<Vec<Vec<u8>>> {
         let resp = if reference_images.is_empty() {
-            self.http
-                .post(self.config.endpoint("images/generations"))
-                .bearer_auth(&self.config.api_key)
+            self.request("images/generations")
                 .json(&json!({
                     "model": self.config.model,
                     "prompt": prompt,
@@ -314,12 +335,7 @@ impl ImageGenClient {
                     .map_err(|e| HighlightError::Config(e.to_string()))?;
                 form = form.part("image[]", part);
             }
-            self.http
-                .post(self.config.endpoint("images/edits"))
-                .bearer_auth(&self.config.api_key)
-                .multipart(form)
-                .send()
-                .await?
+            self.request("images/edits").multipart(form).send().await?
         };
 
         let status = resp.status().as_u16();
@@ -423,9 +439,18 @@ mod tests {
         let src = dir.path().join("src.mp4");
         let gen = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=10:size=640x360:rate=10",
-                "-c:v", "libx264", "-preset", "ultrafast",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=10:size=640x360:rate=10",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
             ])
             .arg(&src)
             .status()
@@ -435,20 +460,26 @@ mod tests {
 
         let highlights = vec![
             vtb_common::Highlight {
-                start_ms: 1_000, end_ms: 4_000, score: 0.9,
-                reason: "a".into(), signals: Default::default(), title: None,
+                start_ms: 1_000,
+                end_ms: 4_000,
+                score: 0.9,
+                reason: "a".into(),
+                signals: Default::default(),
+                title: None,
             },
             vtb_common::Highlight {
-                start_ms: 6_000, end_ms: 9_000, score: 0.5,
-                reason: "b".into(), signals: Default::default(), title: None,
+                start_ms: 6_000,
+                end_ms: 9_000,
+                score: 0.5,
+                reason: "b".into(),
+                signals: Default::default(),
+                title: None,
             },
         ];
         let out_dir = dir.path().join("cover");
-        let frames = extract_candidates(
-            Path::new("ffmpeg"), &src, &highlights, 2, 3, &out_dir,
-        )
-        .await
-        .unwrap();
+        let frames = extract_candidates(Path::new("ffmpeg"), &src, &highlights, 2, 3, &out_dir)
+            .await
+            .unwrap();
         assert_eq!(frames.len(), 6, "2 highlights × 3 frames");
         for f in &frames {
             assert!(f.path.exists());

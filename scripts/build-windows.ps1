@@ -14,9 +14,14 @@ if (-not $IsWindows) {
     throw "This script must be run on Windows."
 }
 
+. (Join-Path $PSScriptRoot 'windows-env.ps1')
+
 $bundleDir = Join-Path $projectRoot "target\release\bundle"
 if (Test-Path $bundleDir) {
-    Remove-Item -Recurse -Force $bundleDir
+    $resolvedBundle = (Resolve-Path -LiteralPath $bundleDir).Path
+    $expectedBundle = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'target\release\bundle'))
+    if ($resolvedBundle -ne $expectedBundle) { throw 'Unexpected bundle directory; refusing cleanup.' }
+    Remove-Item -LiteralPath $resolvedBundle -Recurse -Force
 }
 
 npm ci

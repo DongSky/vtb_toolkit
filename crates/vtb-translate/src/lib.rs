@@ -5,16 +5,17 @@
 //! history keeps coherence) → an LLM backend translates → aligned
 //! [`vtb_common::TranslatedSegment`]s come out.
 
-pub mod error;
-pub mod glossary;
-pub mod prompt;
 pub mod backend;
-pub mod pipeline;
 pub mod batch;
 pub mod danmaku;
+pub mod error;
+pub mod glossary;
+pub mod pipeline;
+pub mod prompt;
 
-pub use backend::{LlmBackend, OpenAiCompatBackend, AnthropicBackend};
+pub use backend::{AnthropicBackend, LlmBackend, OpenAiCompatBackend};
 pub use batch::{translate_batch, BatchConfig, UsageStats};
 pub use error::TranslateError;
 pub use glossary::{Glossary, GlossaryEntry, ReferencePair, StreamerProfile};
-pub use pipeline::{TranslatePipeline, TranslateConfig};
+pub use pipeline::{TranslateConfig, TranslatePipeline};
+pub mod settings;

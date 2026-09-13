@@ -61,11 +61,16 @@ impl CredentialStore for KeyringStore {
 pub struct Secrets;
 
 impl Secrets {
+    /// Keep credentials isolated by use, provider and canonical endpoint.
+    pub fn ai_name(kind: &str, provider: &str, base_url: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(format!("{kind}\n{provider}\n{base_url}").as_bytes());
+        format!("ai-{:x}", digest)
+    }
     const SERVICE: &'static str = "vtb-toolkit-secrets";
 
     fn entry(name: &str) -> Result<keyring::Entry> {
-        keyring::Entry::new(Self::SERVICE, name)
-            .map_err(|e| AccountError::Keyring(e.to_string()))
+        keyring::Entry::new(Self::SERVICE, name).map_err(|e| AccountError::Keyring(e.to_string()))
     }
 
     pub fn set(name: &str, value: &str) -> Result<()> {
@@ -115,6 +120,17 @@ impl CredentialStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai_keys_are_separate_for_every_destination_and_role() {
+        let key = Secrets::ai_name("text", "openai", "https://a.example/v1");
+        for (role, provider, url) in [
+            ("image", "openai", "https://a.example/v1"),
+            ("text", "anthropic", "https://a.example/v1"),
+            ("text", "openai", "https://b.example/v1"),
+        ] {
+            assert_ne!(key, Secrets::ai_name(role, provider, url));
+        }
+    }
 
     fn creds() -> Credentials {
         Credentials {

@@ -1,7 +1,7 @@
 //! Tauri application shell: commands + event bridge over the domain crates.
 
-mod state;
 mod commands;
+mod state;
 
 use state::AppState;
 
@@ -9,12 +9,26 @@ use state::AppState;
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            use tauri::Manager;
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
+                // Keep consumer snapshots for restoration, but don't send
+                // requests to the outgoing page while its bridge is replaced.
+                if let Some(state) = webview.try_state::<AppState>() {
+                    state
+                        .youtube
+                        .ready
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // 打点全局快捷键: works while the app is in the background (the
@@ -29,15 +43,7 @@ pub fn run() {
                         return;
                     }
                     let state = app.state::<AppState>();
-                    let result = commands::markers::sole_active_room(&state.marker_dirs)
-                        .and_then(|room_id| {
-                            commands::markers::add_marker(
-                                app,
-                                &state.marker_dirs,
-                                room_id,
-                                vtb_pipeline::markers::Marker::manual("hotkey", None),
-                            )
-                        });
+                    let result = commands::markers::hotkey_marker(app, &state);
                     if let Err(e) = result {
                         tracing::info!("hotkey marker skipped: {e}");
                     }
@@ -49,12 +55,29 @@ pub fn run() {
             // Restore login from the OS keychain at startup.
             use vtb_account::CredentialStore;
             if let Ok(Some(creds)) = vtb_account::KeyringStore::default().load() {
-                tracing::info!("restored bilibili credentials for uid {}", creds.dede_user_id);
+                tracing::info!(
+                    "restored bilibili credentials for uid {}",
+                    creds.dede_user_id
+                );
                 *state.credentials.lock().unwrap() = Some(creds);
             }
             state
         })
         .invoke_handler(tauri::generate_handler![
+            commands::youtube::youtube_http,
+            commands::youtube::youtube_call,
+            commands::youtube_upload::youtube_upload_status,
+            commands::youtube_upload::youtube_upload_configure,
+            commands::youtube_upload::youtube_upload_authorize,
+            commands::youtube_upload::youtube_upload_cancel,
+            commands::youtube_upload::youtube_upload_logout,
+            commands::youtube_upload::youtube_upload_start,
+            commands::youtube::youtube_bridge_ready,
+            commands::youtube::youtube_reply,
+            commands::youtube::youtube_status,
+            commands::youtube::youtube_connection,
+            commands::youtube::youtube_event,
+            commands::youtube::youtube_delete,
             commands::auth::auth_qr_start,
             commands::auth::auth_qr_poll,
             commands::auth::auth_status,
@@ -62,10 +85,15 @@ pub fn run() {
             commands::config::config_load,
             commands::config::config_set,
             commands::config::secret_set,
+            commands::ai::ai_settings_load,
+            commands::ai::ai_settings_save,
+            commands::ai::ai_key_clear,
+            commands::ai::ai_connection_test,
             commands::config::secret_exists,
             commands::overlay::overlay_start,
             commands::overlay::overlay_stop,
             commands::overlay::overlay_status,
+            commands::overlay::guide_open,
             commands::rooms::room_info,
             commands::rooms::platform_probe,
             commands::review::review_load,
@@ -73,6 +101,8 @@ pub fn run() {
             commands::review::edl_export,
             commands::markers::marker_add,
             commands::markers::marker_rooms,
+            commands::markers::marker_sources,
+            commands::markers::marker_add_source,
             commands::markers::marker_timeline,
             commands::markers::timestamps_export,
             commands::editor::fcpxml_export,
@@ -126,6 +156,7 @@ pub fn run() {
             commands::pipeline::offline_cancel,
             commands::subtitle::live_subtitle_start,
             commands::subtitle::live_subtitle_stop,
+            commands::subtitle::live_subtitle_status,
             commands::profile::profile_save,
             commands::profile::profile_load,
             commands::profile::profile_list,

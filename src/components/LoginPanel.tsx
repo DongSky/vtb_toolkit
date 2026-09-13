@@ -1,3 +1,4 @@
+import { t, tm, useLocale } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -14,6 +15,7 @@ type QrPoll =
   | { state: "expired" };
 
 export default function LoginPanel() {
+  useLocale();
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [qrSvg, setQrSvg] = useState<string | null>(null);
   const [hint, setHint] = useState("");
@@ -83,27 +85,22 @@ export default function LoginPanel() {
 
   return (
     <div className="panel" data-testid="login-panel">
-      <h2>账号</h2>
+      <h2>{t("账号")}</h2>
       {status?.logged_in ? (
         <div data-testid="login-info">
           <p>
-            已登录：<b>{status.uname}</b>（UID {status.mid}）
-          </p>
+            {t("已登录：")}<b>{status.uname}</b>（UID {status.mid}{t("）")}{" "}</p>
           <p className="login-note">
-            登录后弹幕显示完整用户名，录制可用原画画质。凭据保存在系统钥匙串。
-          </p>
+            {t("登录后弹幕显示完整用户名，录制可用原画画质。凭据保存在系统钥匙串。")}{" "}</p>
           <button data-testid="logout-btn" onClick={logout}>
-            退出登录
-          </button>
+            {t("退出登录")}{" "}</button>
         </div>
       ) : (
         <div data-testid="login-form">
           <p className="login-note">
-            未登录。匿名模式下弹幕用户名会被打码，录制画质受限。
-          </p>
+            {t("未登录。匿名模式下弹幕用户名会被打码，录制画质受限。")}{" "}</p>
           <button data-testid="qr-start" onClick={startLogin}>
-            获取登录二维码
-          </button>
+            {t("获取登录二维码")}{" "}</button>
           {qrSvg && (
             <div
               className="qr-box"
@@ -111,12 +108,12 @@ export default function LoginPanel() {
               dangerouslySetInnerHTML={{ __html: qrSvg }}
             />
           )}
-          {hint && <p data-testid="qr-hint">{hint}</p>}
+          {hint && <p data-testid="qr-hint">{tm(hint)}</p>}
         </div>
       )}
       {error && (
         <div className="error" data-testid="login-error">
-          {error}
+          {tm(error)}
         </div>
       )}
     </div>

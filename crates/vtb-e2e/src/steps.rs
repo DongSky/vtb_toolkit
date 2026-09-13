@@ -62,7 +62,7 @@ pub async fn danmaku_stage(
             _ = tokio::time::sleep_until(deadline) => break,
             msg = rx.recv() => match msg {
                 Some(ev) => {
-                    let _ = writer.write(&LogEntry { received_at: Utc::now(), event: ev.clone() });
+                    let _ = writer.write(&LogEntry { source: None, received_at: Utc::now(), event: ev.clone() });
                     events.push(ev);
                 }
                 None => break,
@@ -74,7 +74,8 @@ pub async fn danmaku_stage(
 
     let tally = crate::tally(&events);
     ok(format!("采集到 {} 个事件: {:?}", events.len(), tally));
-    if let Some(LiveEvent::Danmaku(d)) = events.iter().find(|e| matches!(e, LiveEvent::Danmaku(_))) {
+    if let Some(LiveEvent::Danmaku(d)) = events.iter().find(|e| matches!(e, LiveEvent::Danmaku(_)))
+    {
         ok(format!("示例弹幕: [{}] {}", d.username, d.text));
     }
     ok(format!("弹幕日志已写入 {}", log_path.display()));
@@ -87,11 +88,7 @@ pub struct Recording {
     pub file: PathBuf,
 }
 
-pub async fn record_stage(
-    real_room: u64,
-    workdir: &Path,
-    secs: u64,
-) -> Option<Recording> {
+pub async fn record_stage(real_room: u64, workdir: &Path, secs: u64) -> Option<Recording> {
     banner("Stage 2: 取流 (playurl) + ffmpeg 录制");
     use vtb_recorder::stream::{qn, StreamApi};
 
@@ -121,7 +118,10 @@ pub async fn record_stage(
     ));
 
     // Record `secs` via ffmpeg directly (bounded by -t).
-    let out = workdir.join(format!("record.{}", if best.format == "flv" { "flv" } else { "ts" }));
+    let out = workdir.join(format!(
+        "record.{}",
+        if best.format == "flv" { "flv" } else { "ts" }
+    ));
     let status = tokio::process::Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-y"])
         .args([
@@ -153,8 +153,12 @@ pub async fn record_stage(
     // Verify with ffprobe.
     if let Ok(o) = tokio::process::Command::new("ffprobe")
         .args([
-            "-v", "quiet", "-show_entries", "format=duration",
-            "-of", "default=nw=1:nk=1",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
         ])
         .arg(&out)
         .output()
@@ -179,8 +183,7 @@ pub async fn ensure_model() -> Option<PathBuf> {
         return Some(path);
     }
     println!("  下载 whisper tiny 模型…");
-    let url =
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
+    let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
     let bytes = reqwest::get(url).await.ok()?.bytes().await.ok()?;
     std::fs::write(&path, &bytes).ok()?;
     Some(path)
@@ -208,7 +211,11 @@ pub async fn asr_stage(
             return vec![];
         }
     };
-    ok(format!("抽取音频 {} 采样 ({:.1}s @16k)", pcm.len(), pcm.len() as f64 / 16000.0));
+    ok(format!(
+        "抽取音频 {} 采样 ({:.1}s @16k)",
+        pcm.len(),
+        pcm.len() as f64 / 16000.0
+    ));
 
     let engine = match WhisperEngine::new(model, None) {
         Ok(e) => Arc::new(e),
@@ -224,7 +231,10 @@ pub async fn asr_stage(
             "     [{:.1}-{:.1}s]{} {}",
             s.start_ms as f64 / 1000.0,
             s.end_ms as f64 / 1000.0,
-            s.lang.as_deref().map(|l| format!(" ({l})")).unwrap_or_default(),
+            s.lang
+                .as_deref()
+                .map(|l| format!(" ({l})"))
+                .unwrap_or_default(),
             s.text
         );
     }
@@ -272,7 +282,11 @@ pub async fn highlight_stage(
         density: Some(danmaku_density(&offsets, window_ms, total_ms)),
         keyword: Some(keyword_score(&offsets, window_ms, total_ms)),
         gift: Some(gift_value(&offsets, window_ms, total_ms)),
-        audio: Some(audio_energy_scores(&rms_series(&pcm, 500), window_ms, total_ms)),
+        audio: Some(audio_energy_scores(
+            &rms_series(&pcm, 500),
+            window_ms,
+            total_ms,
+        )),
     };
 
     // Permissive config so short test recordings yield candidates.

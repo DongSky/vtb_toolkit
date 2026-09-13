@@ -40,7 +40,10 @@ pub fn run_hook(script: String, payload: HookEvent) {
             Ok(j) => j,
             Err(_) => return,
         };
-        let child = tokio::process::Command::new(&script)
+        let mut command = tokio::process::Command::new(&script);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let child = command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -98,18 +101,47 @@ mod tests {
     async fn hook_receives_json_on_stdin() {
         let dir = tempfile::tempdir().unwrap();
         let out_file = dir.path().join("received.json");
+        #[cfg(unix)]
         let script = dir.path().join("hook.sh");
+        #[cfg(unix)]
         std::fs::write(
             &script,
-            format!("#!/bin/sh\ncat > {}\n", out_file.display()),
+            format!("#!/bin/sh\ncat > '{}'\n", out_file.display()),
         )
         .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        #[cfg(windows)]
+        let script = {
+            use std::os::windows::process::CommandExt;
+            let source = dir.path().join("hook.rs");
+            let executable = dir.path().join("hook.exe");
+            std::fs::write(
+                &source,
+                r#"
+use std::io::Read;
+fn main() {
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input).unwrap();
+    let output = std::env::current_exe().unwrap().with_file_name("received.json");
+    std::fs::write(output, input).unwrap();
+}
+"#,
+            )
+            .unwrap();
+            assert!(std::process::Command::new("rustc")
+                .arg(&source)
+                .arg("-o")
+                .arg(&executable)
+                .creation_flags(0x08000000)
+                .status()
+                .unwrap()
+                .success());
+            executable
+        };
 
         run_hook(
             script.to_string_lossy().into_owned(),

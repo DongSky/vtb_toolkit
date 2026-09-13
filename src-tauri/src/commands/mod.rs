@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod asr_models;
 pub mod auth;
 pub mod config;
@@ -8,13 +9,12 @@ pub mod danmaku_translate;
 pub mod editor;
 pub mod hooks;
 pub mod hotwords;
-pub mod llm;
 pub mod markers;
 pub mod overlay;
-pub mod platform_rec;
-pub mod recorder;
 pub mod pipeline;
+pub mod platform_rec;
 pub mod profile;
+pub mod recorder;
 pub mod review;
 pub mod rooms;
 pub mod stats;
@@ -22,3 +22,6 @@ pub mod subtitle;
 pub mod tts;
 pub mod twitch;
 pub mod upload;
+pub mod youtube;
+
+pub mod youtube_upload;

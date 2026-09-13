@@ -12,15 +12,25 @@ use vtb_recorder::stream::{qn, StreamApi};
 
 #[tokio::main]
 async fn main() {
-    let short: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(320);
-    let secs: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(15);
+    let short: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(320);
+    let secs: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15);
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
         .build()
         .unwrap();
     // Resolve real room id first (AutoRecorder records by the id it's given).
-    let real = StreamApi::new(client.clone()).room_status(short).await.unwrap().real_room_id;
+    let real = StreamApi::new(client.clone())
+        .room_status(short)
+        .await
+        .unwrap()
+        .real_room_id;
     println!("real room {real}");
 
     let dir = std::path::PathBuf::from("/tmp/vtb-e2e-auto");
@@ -35,14 +45,24 @@ async fn main() {
     let handle = tokio::spawn(auto.run(mrx, etx));
 
     // Simulate the monitor detecting the room going live.
-    mtx.send(MonitorEvent::WentLive { room_id: real }).await.unwrap();
+    mtx.send(MonitorEvent::WentLive { room_id: real })
+        .await
+        .unwrap();
 
     // Wait for the started event.
-    let mut danmaku_stop: Option<(tokio::sync::watch::Sender<bool>, tokio::task::JoinHandle<u32>)> =
-        None;
+    let mut danmaku_stop: Option<(
+        tokio::sync::watch::Sender<bool>,
+        tokio::task::JoinHandle<u32>,
+    )> = None;
     match erx.recv().await {
-        Some(RecorderEvent::RecordingStarted { room_id, output_dir }) => {
-            println!("✅ RecordingStarted room={room_id} dir={}", output_dir.display());
+        Some(RecorderEvent::RecordingStarted {
+            room_id,
+            output_dir,
+        }) => {
+            println!(
+                "✅ RecordingStarted room={room_id} dir={}",
+                output_dir.display()
+            );
             // M1.4: danmaku JSONL logging into the session dir (mirrors
             // the Tauri wiring).
             let api = vtb_danmaku::api::BiliApi::default_client().unwrap();
@@ -58,6 +78,7 @@ async fn main() {
                 while let Some(ev) = rx.recv().await {
                     if let vtb_danmaku::ManagedEvent::Live(live) = ev {
                         let _ = writer.write(&vtb_pipeline::danmaku_log::LogEntry {
+                            source: None,
                             received_at: chrono::Utc::now(),
                             event: live,
                         });
@@ -83,7 +104,9 @@ async fn main() {
     tokio::time::sleep(Duration::from_secs(secs)).await;
 
     // Simulate going offline → triggers graceful stop + manifest export.
-    mtx.send(MonitorEvent::WentOffline { room_id: real }).await.unwrap();
+    mtx.send(MonitorEvent::WentOffline { room_id: real })
+        .await
+        .unwrap();
     if let Some((stop, task)) = danmaku_stop.take() {
         let _ = stop.send(true);
         if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(5), task).await {
@@ -94,7 +117,10 @@ async fn main() {
         Some(RecorderEvent::RecordingStopped { room_id, metadata }) => {
             println!("✅ RecordingStopped room={room_id}");
             println!("   分段数: {}", metadata.segments.len());
-            println!("   总大小: {:.1} MB", metadata.total_bytes() as f64 / 1_048_576.0);
+            println!(
+                "   总大小: {:.1} MB",
+                metadata.total_bytes() as f64 / 1_048_576.0
+            );
             println!("   时长: {:?}s", metadata.duration_secs());
             if metadata.total_bytes() == 0 {
                 eprintln!("❌ 录制文件为空");
@@ -107,14 +133,21 @@ async fn main() {
     let _ = handle.await;
 
     // Verify manifest on disk.
-    let manifests: Vec<_> = walk(&dir).into_iter().filter(|p| p.to_string_lossy().ends_with(".meta.json")).collect();
+    let manifests: Vec<_> = walk(&dir)
+        .into_iter()
+        .filter(|p| p.to_string_lossy().ends_with(".meta.json"))
+        .collect();
     println!("\n=== 会话清单 ===");
     for m in &manifests {
         println!("  {}", m.display());
         if let Ok(txt) = std::fs::read_to_string(m) {
             let v: serde_json::Value = serde_json::from_str(&txt).unwrap();
-            println!("  room_id={} segments={} ended_at={}",
-                v["room_id"], v["segments"].as_array().map(|a| a.len()).unwrap_or(0), v["ended_at"]);
+            println!(
+                "  room_id={} segments={} ended_at={}",
+                v["room_id"],
+                v["segments"].as_array().map(|a| a.len()).unwrap_or(0),
+                v["ended_at"]
+            );
         }
     }
     if manifests.is_empty() {
@@ -129,7 +162,11 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.is_dir() { out.extend(walk(&p)); } else { out.push(p); }
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
         }
     }
     out

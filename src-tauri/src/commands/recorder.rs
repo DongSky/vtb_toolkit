@@ -15,9 +15,19 @@ pub const EVENT_RECORDER: &str = "recorder://event";
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum RecorderPayload {
-    Started { room_id: u64, output_dir: String },
-    Stopped { room_id: u64, total_bytes: u64, segments: usize },
-    Error { room_id: u64, message: String },
+    Started {
+        room_id: u64,
+        output_dir: String,
+    },
+    Stopped {
+        room_id: u64,
+        total_bytes: u64,
+        segments: usize,
+    },
+    Error {
+        room_id: u64,
+        message: String,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -71,7 +81,9 @@ pub(crate) fn load_notifier(app: &AppHandle) -> vtb_notify::MultiNotifier {
 /// "retention": { "max_age_days": 30, "max_sessions_per_room": 10,
 ///                 "target_free_gib": 20 }
 /// ```
-pub(crate) fn load_retention(settings: &serde_json::Value) -> vtb_recorder::retention::RetentionPolicy {
+pub(crate) fn load_retention(
+    settings: &serde_json::Value,
+) -> vtb_recorder::retention::RetentionPolicy {
     use std::time::Duration;
     let r = &settings["retention"];
     let max_age = r["max_age_days"]
@@ -181,6 +193,7 @@ fn start_danmaku_log(
                         }
                     }
                     let entry = LogEntry {
+                        source: None,
                         received_at: now,
                         event: live,
                     };
@@ -270,6 +283,7 @@ pub async fn recorder_start(
                 while let Some(chunk) = rx.recv().await {
                     for seg in asr.feed(&chunk).await {
                         publisher.publish(vtb_overlay::OverlayMessage::Subtitle {
+                            room_key: None,
                             text: seg.text.clone(),
                             translated: None,
                             lang: seg.lang.clone(),
@@ -328,7 +342,10 @@ pub async fn recorder_start(
         let mut danmaku_log: Option<DanmakuLogHandle> = None;
         while let Some(ev) = rec_rx.recv().await {
             let payload = match ev {
-                RecorderEvent::RecordingStarted { room_id, output_dir } => {
+                RecorderEvent::RecordingStarted {
+                    room_id,
+                    output_dir,
+                } => {
                     // Rolling cleanup of old recordings (对标 blrec): runs
                     // when a new session starts, never touches the active one.
                     if !retention.is_noop() {
@@ -366,12 +383,15 @@ pub async fn recorder_start(
                         output_dir.to_string_lossy().into_owned(),
                     );
                     if let Some(s) = super::hooks::hook_for(&hook_settings, "recording_started") {
-                        super::hooks::run_hook(s, super::hooks::HookEvent {
-                            event: "recording_started".into(),
-                            room_id,
-                            path: Some(output_dir.to_string_lossy().into_owned()),
-                            message: None,
-                        });
+                        super::hooks::run_hook(
+                            s,
+                            super::hooks::HookEvent {
+                                event: "recording_started".into(),
+                                room_id,
+                                path: Some(output_dir.to_string_lossy().into_owned()),
+                                message: None,
+                            },
+                        );
                     }
                     RecorderPayload::Started {
                         room_id,
@@ -407,20 +427,23 @@ pub async fn recorder_start(
                                     s.discontinuities
                                 ),
                                 Ok(_) => {}
-                                Err(e) => tracing::warn!(
-                                    "FLV 修复失败 {}: {e}",
-                                    path.display()
-                                ),
+                                Err(e) => tracing::warn!("FLV 修复失败 {}: {e}", path.display()),
                             }
                         }
                     }
                     if let Some(s) = super::hooks::hook_for(&hook_settings, "recording_stopped") {
-                        super::hooks::run_hook(s, super::hooks::HookEvent {
-                            event: "recording_stopped".into(),
-                            room_id,
-                            path: metadata.segments.first().map(|seg| seg.path.to_string_lossy().into_owned()),
-                            message: None,
-                        });
+                        super::hooks::run_hook(
+                            s,
+                            super::hooks::HookEvent {
+                                event: "recording_stopped".into(),
+                                room_id,
+                                path: metadata
+                                    .segments
+                                    .first()
+                                    .map(|seg| seg.path.to_string_lossy().into_owned()),
+                                message: None,
+                            },
+                        );
                     }
                     push_notify(
                         &notifier,
@@ -467,10 +490,7 @@ pub async fn recorder_start(
 }
 
 #[tauri::command]
-pub async fn recorder_stop(
-    state: State<'_, AppState>,
-    room_id: u64,
-) -> Result<(), String> {
+pub async fn recorder_stop(state: State<'_, AppState>, room_id: u64) -> Result<(), String> {
     if let Some(handles) = state.recorders.lock().unwrap().remove(&room_id) {
         // Aborting the monitor closes the channel; the recorder loop then
         // stops any active ffmpeg gracefully and exits.

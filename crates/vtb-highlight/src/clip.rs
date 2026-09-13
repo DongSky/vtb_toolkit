@@ -25,7 +25,14 @@ pub struct ClipOptions {
 fn filter_escape(path: &Path) -> String {
     let mut out = String::new();
     for c in path.to_string_lossy().chars() {
-        if matches!(c, '\\' | ':' | ',' | ';' | '[' | ']' | '\'') {
+        // libavfilter treats a Windows backslash as an escape and silently
+        // removes directory separators. Forward slashes work on Windows and
+        // leave only the drive colon to escape.
+        if c == '\\' {
+            out.push('/');
+            continue;
+        }
+        if matches!(c, ':' | ',' | ';' | '[' | ']' | '\'') {
             out.push('\\');
         }
         out.push(c);
@@ -58,15 +65,10 @@ pub fn build_clip_args(
     if let Some(subs) = &opts.burn_subtitles {
         // Accurate mode: decode from 0 so subtitle PTS align, trim on output.
         args.extend::<[OsString; 2]>(["-i".into(), opts.input.clone().into()]);
-        args.extend::<[OsString; 4]>([
-            "-ss".into(),
-            start.into(),
-            "-t".into(),
-            dur.into(),
-        ]);
+        args.extend::<[OsString; 4]>(["-ss".into(), start.into(), "-t".into(), dur.into()]);
         args.extend::<[OsString; 2]>([
             "-vf".into(),
-            format!("subtitles={}", filter_escape(subs)).into(),
+            format!("subtitles=filename='{}'", filter_escape(subs)).into(),
         ]);
         args.extend::<[OsString; 6]>([
             "-c:v".into(),
@@ -129,11 +131,7 @@ pub async fn subtitles_filter_available(ffmpeg: &Path) -> bool {
 }
 
 /// Cut a single highlight; returns the output path.
-pub async fn cut_clip(
-    ffmpeg: &Path,
-    opts: &ClipOptions,
-    highlight: &Highlight,
-) -> Result<PathBuf> {
+pub async fn cut_clip(ffmpeg: &Path, opts: &ClipOptions, highlight: &Highlight) -> Result<PathBuf> {
     if opts.burn_subtitles.is_some() && !subtitles_filter_available(ffmpeg).await {
         return Err(HighlightError::Ffmpeg(
             "当前 ffmpeg 未编译 libass（无 subtitles 滤镜），无法烧录字幕；\
@@ -223,6 +221,10 @@ mod tests {
             filter_escape(Path::new("/a/b's:file,x.ass")),
             "/a/b\\'s\\:file\\,x.ass"
         );
+        assert_eq!(
+            filter_escape(Path::new(r"C:\recordings\subtitles.srt")),
+            "C\\:/recordings/subtitles.srt"
+        );
     }
 
     #[test]
@@ -250,10 +252,24 @@ mod tests {
         // Generate a 3s test clip.
         let gen = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
-                "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=3:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
             ])
             .arg(&src)
             .status()
@@ -311,10 +327,24 @@ mod tests {
         let src = dir.path().join("src.mp4");
         let gen = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
-                "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=3:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
             ])
             .arg(&src)
             .status()
@@ -324,11 +354,7 @@ mod tests {
 
         // Minimal SRT covering the clip window.
         let subs = dir.path().join("subs.srt");
-        std::fs::write(
-            &subs,
-            "1\n00:00:00,500 --> 00:00:02,000\n烧录测试字幕\n\n",
-        )
-        .unwrap();
+        std::fs::write(&subs, "1\n00:00:00,500 --> 00:00:02,000\n烧录测试字幕\n\n").unwrap();
 
         let o = ClipOptions {
             input: src,
@@ -354,9 +380,8 @@ mod tests {
 pub fn ffmpeg_available() -> bool {
     std::env::var_os("PATH")
         .map(|paths| {
-            std::env::split_paths(&paths).any(|d| {
-                d.join("ffmpeg").exists() || d.join("ffmpeg.exe").exists()
-            })
+            std::env::split_paths(&paths)
+                .any(|d| d.join("ffmpeg").exists() || d.join("ffmpeg.exe").exists())
         })
         .unwrap_or(false)
 }

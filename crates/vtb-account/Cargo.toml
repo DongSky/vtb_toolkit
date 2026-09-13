@@ -13,6 +13,10 @@ tracing.workspace = true
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 qrcode = "0.14"
 url = "2"
+tokio.workspace = true
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.9"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

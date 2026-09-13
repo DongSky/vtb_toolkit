@@ -29,9 +29,17 @@ impl Default for SegmentPolicy {
 
 /// Options controlling a recording invocation.
 #[derive(Debug, Clone)]
+pub struct AudioInput {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RecordOptions {
     /// Source stream URL (flv/m3u8/...).
     pub input_url: String,
+    /// Separate audio for platforms that expose adaptive video/audio streams.
+    pub audio_input: Option<AudioInput>,
     /// Output directory.
     pub output_dir: PathBuf,
     /// Base file name without extension, e.g. "room123_20260717".
@@ -57,6 +65,7 @@ impl RecordOptions {
     ) -> Self {
         Self {
             input_url: input_url.into(),
+            audio_input: None,
             output_dir: output_dir.into(),
             file_stem: file_stem.into(),
             extension: "flv".into(),
@@ -113,6 +122,7 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
     args.push("1".into());
     args.push("-reconnect_delay_max".into());
     args.push("5".into());
+    args.extend(["-rw_timeout", "15000000"].map(OsString::from));
 
     if let Some(ua) = &opts.user_agent {
         args.push("-user_agent".into());
@@ -131,6 +141,38 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
     // Input.
     args.push("-i".into());
     args.push(opts.input_url.clone().into());
+
+    if let Some(audio) = &opts.audio_input {
+        args.extend(
+            [
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_delay_max",
+                "5",
+                "-rw_timeout",
+                "15000000",
+                "-isync",
+                "0",
+            ]
+            .map(OsString::from),
+        );
+        if !audio.headers.is_empty() {
+            args.push("-headers".into());
+            args.push(
+                audio
+                    .headers
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}\r\n"))
+                    .collect::<String>()
+                    .into(),
+            );
+        }
+        args.push("-i".into());
+        args.push(audio.url.clone().into());
+        args.extend(["-map", "0:v:0", "-map", "1:a:0"].map(OsString::from));
+    }
 
     // Stream copy: no re-encode.
     args.push("-c".into());
@@ -163,6 +205,9 @@ pub fn build_args(opts: &RecordOptions) -> Vec<OsString> {
 
     // Secondary output: decoded audio for live ASR, same pull.
     if opts.tee_audio_pcm {
+        if opts.audio_input.is_some() {
+            args.extend(["-map", "1:a:0"].map(OsString::from));
+        }
         for a in ["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"] {
             args.push(a.into());
         }
@@ -214,11 +259,17 @@ impl FfmpegRecorder {
     pub fn spawn(&self, opts: &RecordOptions) -> Result<tokio::process::Child> {
         std::fs::create_dir_all(&opts.output_dir)?;
         let args = build_args(opts);
-        tracing::info!("spawning ffmpeg: {:?} {:?}", self.binary, args);
+        tracing::info!(
+            "spawning ffmpeg: {:?} -> {:?}",
+            self.binary,
+            opts.output_template()
+        );
         let mut cmd = tokio::process::Command::new(&self.binary);
         cmd.args(&args)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
         if opts.tee_audio_pcm {
             cmd.stdout(std::process::Stdio::piped());
         }
@@ -235,9 +286,7 @@ pub fn list_outputs(opts: &RecordOptions) -> Result<Vec<PathBuf>> {
         let entry = entry?;
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with(&prefix)
-                && name.ends_with(&format!(".{}", opts.extension))
-            {
+            if name.starts_with(&prefix) && name.ends_with(&format!(".{}", opts.extension)) {
                 result.push(path);
             }
         }
@@ -254,7 +303,10 @@ pub fn binary_exists(binary: &Path) -> bool {
         // bare name: search PATH.
         std::env::var_os("PATH")
             .map(|paths| {
-                std::env::split_paths(&paths).any(|dir| dir.join(binary).exists())
+                std::env::split_paths(&paths).any(|dir| {
+                    dir.join(binary).exists()
+                        || cfg!(windows) && dir.join(format!("{}.exe", binary.display())).is_file()
+                })
             })
             .unwrap_or(false)
     }
@@ -262,6 +314,33 @@ pub fn binary_exists(binary: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn adaptive_stream_maps_video_audio_and_pcm_explicitly() {
+        let mut options = super::RecordOptions::new("https://test/video", "out", "live");
+        options.audio_input = Some(super::AudioInput {
+            url: "https://test/audio".into(),
+            headers: vec![("Referer".into(), "https://www.youtube.com/".into())],
+        });
+        options.tee_audio_pcm = true;
+        let args: Vec<String> = super::build_args(&options)
+            .iter()
+            .map(|s| s.to_string_lossy().into())
+            .collect();
+        assert_eq!(
+            args.windows(2)
+                .filter(|p| p[0] == "-i")
+                .map(|p| p[1].as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://test/video", "https://test/audio"]
+        );
+        assert_eq!(
+            args.windows(2)
+                .filter(|p| p[0] == "-map")
+                .map(|p| p[1].as_str())
+                .collect::<Vec<_>>(),
+            vec!["0:v:0", "1:a:0", "1:a:0"]
+        );
+    }
     use super::*;
 
     fn opts() -> RecordOptions {

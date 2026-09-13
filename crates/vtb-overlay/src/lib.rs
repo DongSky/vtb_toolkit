@@ -31,10 +31,22 @@ pub enum OverlayMessage {
         /// the page can attach the translation once it arrives).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tid: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<Box<vtb_common::EventSource>>,
+    },
+    ChatDelete {
+        room_key: String,
+        message_id: Option<String>,
+        user_id: Option<String>,
     },
     /// Async translation for an earlier danmaku, keyed by `tid`.
-    DanmakuTranslation { tid: u64, translated: String },
+    DanmakuTranslation {
+        tid: u64,
+        translated: String,
+    },
     Subtitle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room_key: Option<String>,
         text: String,
         translated: Option<String>,
         #[serde(default)]
@@ -42,6 +54,9 @@ pub enum OverlayMessage {
     },
     /// Clears the subtitle bar (e.g. stream stopped).
     SubtitleClear,
+    SubtitleClearSource {
+        room_key: String,
+    },
 }
 
 /// Cloneable publisher handle; safe to call whether or not the server is
@@ -94,6 +109,7 @@ pub type StatusProvider = std::sync::Arc<dyn Fn() -> serde_json::Value + Send + 
 struct AppCtx {
     tx: broadcast::Sender<OverlayMessage>,
     status: Option<StatusProvider>,
+    stop: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Create the publisher used by the app regardless of server lifetime.
@@ -104,10 +120,7 @@ pub fn publisher() -> OverlayPublisher {
 
 /// Start the server on 127.0.0.1 (port 0 = ephemeral). The `publisher`'s
 /// messages are streamed to all connected overlay pages.
-pub async fn start(
-    publisher: &OverlayPublisher,
-    port: u16,
-) -> std::io::Result<OverlayServer> {
+pub async fn start(publisher: &OverlayPublisher, port: u16) -> std::io::Result<OverlayServer> {
     start_with_status(publisher, port, None).await
 }
 
@@ -118,15 +131,31 @@ pub async fn start_with_status(
     port: u16,
     status: Option<StatusProvider>,
 ) -> std::io::Result<OverlayServer> {
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let ctx = AppCtx {
         tx: publisher.tx.clone(),
         status,
+        stop: stop_rx,
     };
     let app = Router::new()
+        .route("/", get(danmaku_page))
+        .route("/guide", get(|| async { Html(pages::GUIDE_HTML) }))
         .route("/overlay/danmaku", get(danmaku_page))
         .route("/overlay/subtitle", get(subtitle_page))
         .route("/ws", get(ws_handler))
         .route("/api/status", get(api_status))
+        .route(
+            "/assets/chat.js",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/javascript; charset=utf-8",
+                    )],
+                    pages::CHAT_JS,
+                )
+            }),
+        )
         .with_state(ctx);
 
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -135,8 +164,9 @@ pub async fn start_with_status(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
-        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+        let server = axum::serve(listener, app).with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
+            let _ = stop_tx.send(true);
         });
         if let Err(e) = server.await {
             tracing::warn!("overlay server error: {e}");
@@ -168,12 +198,17 @@ async fn api_status(State(ctx): State<AppCtx>) -> axum::response::Response {
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(ctx): State<AppCtx>) -> axum::response::Response {
-    ws.on_upgrade(move |socket| client_loop(socket, ctx.tx.subscribe()))
+    ws.on_upgrade(move |socket| client_loop(socket, ctx.tx.subscribe(), ctx.stop))
 }
 
-async fn client_loop(mut socket: WebSocket, mut rx: broadcast::Receiver<OverlayMessage>) {
+async fn client_loop(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<OverlayMessage>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
     loop {
         tokio::select! {
+            _ = stop.changed() => { let _ = socket.send(Message::Close(None)).await; break; },
             msg = rx.recv() => match msg {
                 Ok(m) => {
                     let json = match serde_json::to_string(&m) {
@@ -191,6 +226,7 @@ async fn client_loop(mut socket: WebSocket, mut rx: broadcast::Receiver<OverlayM
             },
             // Drain (and ignore) anything the page sends; detect close.
             incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) => break,
                 Some(Ok(_)) => {}
                 _ => break,
             }
@@ -215,13 +251,25 @@ mod tests {
             .unwrap();
         assert_eq!(danmaku.status(), 200);
         let body = danmaku.text().await.unwrap();
-        assert!(body.contains("WebSocket"));
-        assert!(body.contains("background: transparent") || body.contains("background:transparent"));
+        assert!(body.contains("/assets/chat.js"));
+        assert!(
+            body.contains("background: transparent") || body.contains("background:transparent")
+        );
 
         let subtitle = reqwest::get(format!("http://127.0.0.1:{port}/overlay/subtitle"))
             .await
             .unwrap();
         assert_eq!(subtitle.status(), 200);
+
+        let guide = reqwest::get(format!("http://127.0.0.1:{port}/guide?lang=ja"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(guide.contains("guide-data"));
+        assert!(guide.contains("VTB Toolkit User Guide"));
+        assert!(guide.contains("VTB Toolkit 操作ガイド"));
 
         // Connect WS, publish, receive.
         let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
@@ -232,6 +280,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         publisher.publish(OverlayMessage::Subtitle {
+            room_key: None,
             text: "こんばんは".into(),
             translated: Some("晚上好".into()),
             lang: Some("ja".into()),
@@ -256,9 +305,8 @@ mod tests {
     #[tokio::test]
     async fn api_status_serves_provider_snapshot() {
         let pub1 = publisher();
-        let provider: StatusProvider = std::sync::Arc::new(|| {
-            serde_json::json!({"rooms": [24158116], "recording": true})
-        });
+        let provider: StatusProvider =
+            std::sync::Arc::new(|| serde_json::json!({"rooms": [24158116], "recording": true}));
         let server = start_with_status(&pub1, 0, Some(provider)).await.unwrap();
         let v: serde_json::Value =
             reqwest::get(format!("http://127.0.0.1:{}/api/status", server.port))
@@ -297,6 +345,7 @@ mod tests {
         use chrono::Utc;
         use vtb_common::DanmakuMsg;
         let msg = OverlayMessage::Danmaku {
+            source: None,
             event: LiveEvent::Danmaku(DanmakuMsg {
                 room_id: 1,
                 uid: 2,
@@ -320,7 +369,11 @@ mod tests {
         // Without a tid the key is omitted entirely (wire-compatible with
         // pre-translation clients).
         let msg2 = OverlayMessage::Danmaku {
-            event: LiveEvent::WatchedChange { room_id: 1, count: 3 },
+            source: None,
+            event: LiveEvent::WatchedChange {
+                room_id: 1,
+                count: 3,
+            },
             tid: None,
         };
         let v2: serde_json::Value =

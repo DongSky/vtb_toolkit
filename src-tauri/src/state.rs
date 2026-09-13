@@ -6,6 +6,9 @@ use tokio::task::JoinHandle;
 use vtb_account::{Credentials, QrLogin};
 
 pub struct AppState {
+    pub youtube_upload: crate::commands::youtube_upload::UploadState,
+    pub youtube: crate::commands::youtube::YoutubeState,
+    pub source_marker_dirs: Mutex<HashMap<String, std::path::PathBuf>>,
     /// room_id → managed danmaku connection.
     pub danmaku: Mutex<HashMap<u64, DanmakuHandles>>,
     /// twitch channel → chat connection.
@@ -17,7 +20,8 @@ pub struct AppState {
     /// job id → offline job task.
     pub jobs: Mutex<HashMap<String, JoinHandle<()>>>,
     /// room_id → live subtitle task.
-    pub subtitles: Mutex<HashMap<u64, JoinHandle<()>>>,
+    pub source_recording_claims: Mutex<std::collections::HashSet<String>>,
+    pub subtitles: Mutex<HashMap<String, JoinHandle<()>>>,
     /// Logged-in credentials (loaded from keychain at startup).
     pub credentials: Mutex<Option<Credentials>>,
     /// In-progress QR login session.
@@ -31,8 +35,7 @@ pub struct AppState {
     /// 场控: auto-thank config (shared with pumps), serial send worker and
     /// per-room timed announcements.
     pub autothank: crate::commands::danmaku_send::SharedAutoThank,
-    pub danmaku_send_tx:
-        std::sync::OnceLock<tokio::sync::mpsc::Sender<(u64, String)>>,
+    pub danmaku_send_tx: std::sync::OnceLock<tokio::sync::mpsc::Sender<(u64, String)>>,
     pub danmaku_timers: Mutex<HashMap<u64, JoinHandle<()>>>,
     /// Danmaku TTS switches + speech queue (Arc so pump tasks can hold them).
     pub tts_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -47,11 +50,15 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
+            youtube_upload: Default::default(),
+            youtube: Default::default(),
+            source_marker_dirs: Default::default(),
             danmaku: Mutex::default(),
             twitch: Mutex::default(),
             platform_recorders: Mutex::default(),
             recorders: Mutex::default(),
             jobs: Mutex::default(),
+            source_recording_claims: Mutex::default(),
             subtitles: Mutex::default(),
             credentials: Mutex::default(),
             qr_login: tokio::sync::Mutex::default(),
@@ -150,4 +157,3 @@ impl AppState {
         vtb_account::build_client(self.creds().as_ref()).map_err(|e| e.to_string())
     }
 }
-

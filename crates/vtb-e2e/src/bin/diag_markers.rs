@@ -39,6 +39,7 @@ fn main() {
         for i in 0..20 {
             let ts = start + Duration::milliseconds(120_000 + i * 50);
             w.write(&LogEntry {
+                source: None,
                 received_at: ts,
                 event: LiveEvent::Danmaku(DanmakuMsg {
                     room_id: 320,

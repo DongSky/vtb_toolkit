@@ -55,12 +55,17 @@ pub const CATALOG: &[ModelInfo] = &[
     },
 ];
 
-/// Models directory: `$VTB_MODELS_DIR` override, else `~/.cache/vtb-toolkit`.
+/// Models directory: override, Windows local app data, or the home cache.
 pub fn models_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("VTB_MODELS_DIR") {
         return PathBuf::from(dir);
     }
+    #[cfg(windows)]
+    if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(dir).join("vtb-toolkit/models");
+    }
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|h| PathBuf::from(h).join(".cache/vtb-toolkit"))
         .unwrap_or_else(|| PathBuf::from("."))
 }
@@ -86,7 +91,9 @@ pub fn list_models() -> Vec<ModelStatus> {
                 size_mb: m.size_mb,
                 note: m.note.to_string(),
                 downloaded: path.exists()
-                    && std::fs::metadata(&path).map(|md| md.len() > 1_000_000).unwrap_or(false),
+                    && std::fs::metadata(&path)
+                        .map(|md| md.len() > 1_000_000)
+                        .unwrap_or(false),
                 path: path.to_string_lossy().into_owned(),
             }
         })
@@ -194,5 +201,12 @@ mod tests {
         assert!(tiny.downloaded);
         assert!(tiny.path.ends_with("ggml-tiny.bin"));
         std::env::remove_var("VTB_MODELS_DIR");
+        #[cfg(windows)]
+        {
+            // An installed app must not put models in its working directory.
+            let local = std::env::var_os("LOCALAPPDATA").unwrap();
+            assert!(models_dir().starts_with(PathBuf::from(local)));
+            assert!(models_dir().is_absolute());
+        }
     }
 }

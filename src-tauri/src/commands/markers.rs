@@ -105,6 +105,63 @@ pub async fn marker_rooms(state: State<'_, AppState>) -> Result<Vec<u64>, String
     Ok(state.marker_dirs.lock().unwrap().keys().copied().collect())
 }
 
+pub fn add_source_marker(
+    app: &AppHandle,
+    state: &AppState,
+    key: &str,
+    marker: Marker,
+) -> Result<(), String> {
+    if let Some(id) = key.strip_prefix("bilibili:").and_then(|id| id.parse().ok()) {
+        return add_marker(app, &state.marker_dirs, id, marker);
+    }
+    let dirs = state.source_marker_dirs.lock().unwrap();
+    let dir = dirs.get(key).ok_or("该直播没有进行中的录制会话")?;
+    markers::append_marker(dir, &marker).map_err(|e| e.to_string())?;
+    let mut p = serde_json::to_value(payload(0, &marker)).map_err(|e| e.to_string())?;
+    p["room_key"] = serde_json::json!(key);
+    let _ = app.emit(EVENT_MARKER, p);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn marker_sources(state: State<'_, AppState>) -> Vec<String> {
+    let mut keys: Vec<String> = state
+        .marker_dirs
+        .lock()
+        .unwrap()
+        .keys()
+        .map(|id| format!("bilibili:{id}"))
+        .collect();
+    keys.extend(state.source_marker_dirs.lock().unwrap().keys().cloned());
+    keys.sort();
+    keys
+}
+
+#[tauri::command]
+pub fn marker_add_source(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    key: String,
+    note: Option<String>,
+) -> Result<(), String> {
+    add_source_marker(&app, &state, &key, Marker::manual("button", note))
+}
+
+pub fn hotkey_marker(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let mut keys: Vec<String> = state
+        .marker_dirs
+        .lock()
+        .unwrap()
+        .keys()
+        .map(|id| format!("bilibili:{id}"))
+        .collect();
+    keys.extend(state.source_marker_dirs.lock().unwrap().keys().cloned());
+    if keys.len() != 1 {
+        return Err("请在弹幕页选择要打点的录制会话".into());
+    }
+    add_source_marker(app, state, &keys[0], Marker::manual("hotkey", None))
+}
+
 /// Timeline events for the review page: markers + paid/notable live
 /// events (SC / 舰长 / 开播) as offsets against the session start.
 #[derive(serde::Serialize)]
@@ -178,22 +235,7 @@ pub async fn marker_timeline(dir: String) -> Result<TimelineData, String> {
     let mut events = Vec::new();
     let log = session.join("danmaku.jsonl");
     if log.exists() {
-        use std::io::BufRead;
-        let file = std::fs::File::open(&log).map_err(|e| e.to_string())?;
-        for line in std::io::BufReader::new(file).lines() {
-            let Ok(line) = line else { break };
-            if !(line.contains("\"super_chat\"")
-                || line.contains("\"guard_buy\"")
-                || line.contains("\"live_start\"")
-                || line.contains("\"live_end\""))
-            {
-                continue;
-            }
-            let Ok(entry) =
-                serde_json::from_str::<vtb_pipeline::danmaku_log::LogEntry>(&line)
-            else {
-                continue;
-            };
+        for entry in vtb_pipeline::danmaku_log::read_log(&log).map_err(|e| e.to_string())? {
             let ms = (entry.received_at - start).num_milliseconds();
             if ms < 0 {
                 continue;
@@ -201,7 +243,17 @@ pub async fn marker_timeline(dir: String) -> Result<TimelineData, String> {
             let (kind, label) = match &entry.event {
                 vtb_common::LiveEvent::SuperChat(sc) => (
                     "super_chat",
-                    format!("SC ¥{:.0} {}: {}", sc.price, sc.username, sc.text),
+                    format!(
+                        "SC {} {}: {}",
+                        entry
+                            .source
+                            .as_ref()
+                            .and_then(|s| s.money.as_ref())
+                            .map(|m| m.display.clone())
+                            .unwrap_or_else(|| format!("¥{:.0}", sc.price)),
+                        sc.username,
+                        sc.text
+                    ),
                 ),
                 vtb_common::LiveEvent::GuardBuy(g) => {
                     let tier = match g.guard_level {
@@ -209,7 +261,18 @@ pub async fn marker_timeline(dir: String) -> Result<TimelineData, String> {
                         2 => "提督",
                         _ => "舰长",
                     };
-                    ("guard_buy", format!("{} 上舰: {tier}", g.username))
+                    (
+                        "guard_buy",
+                        format!(
+                            "{}: {}",
+                            g.username,
+                            entry
+                                .source
+                                .as_ref()
+                                .and_then(|s| s.membership.as_deref())
+                                .unwrap_or(tier)
+                        ),
+                    )
                 }
                 vtb_common::LiveEvent::LiveStart { .. } => ("live_start", "开播".into()),
                 vtb_common::LiveEvent::LiveEnd { .. } => ("live_end", "下播".into()),
@@ -292,8 +355,7 @@ mod tests {
 
     #[test]
     fn sole_active_room_rules() {
-        let dirs: std::sync::Mutex<std::collections::HashMap<u64, PathBuf>> =
-            Default::default();
+        let dirs: std::sync::Mutex<std::collections::HashMap<u64, PathBuf>> = Default::default();
         assert!(sole_active_room(&dirs).is_err());
         dirs.lock().unwrap().insert(7, PathBuf::from("/a"));
         assert_eq!(sole_active_room(&dirs).unwrap(), 7);

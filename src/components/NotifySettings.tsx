@@ -1,3 +1,4 @@
+import { t, useLocale } from "../i18n";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -10,6 +11,7 @@ interface NotifyCfg {
 
 /** Notification channels for recording events (Bark/ServerChan/TG/webhook). */
 export default function NotifySettings() {
+  useLocale();
   const [bark, setBark] = useState("");
   const [serverchan, setServerchan] = useState("");
   const [tgToken, setTgToken] = useState("");
@@ -51,11 +53,11 @@ export default function NotifySettings() {
 
   return (
     <details className="notify-settings" data-testid="notify-settings">
-      <summary>通知设置（开播/录制完成/异常推送）</summary>
+      <summary>{t("通知设置（开播/录制完成/异常推送）")}</summary>
       <div className="form-col" style={{ marginTop: 8 }}>
         <input
           data-testid="notify-bark"
-          placeholder="Bark Key（https://api.day.app/后面的部分）"
+          placeholder={t("Bark Key（https://api.day.app/后面的部分）")}
           value={bark}
           onChange={(e) => setBark(e.target.value)}
         />
@@ -81,12 +83,12 @@ export default function NotifySettings() {
         </div>
         <textarea
           data-testid="notify-webhooks"
-          placeholder="Webhook URL（每行一个，POST JSON）"
+          placeholder={t("Webhook URL（每行一个，POST JSON）")}
           value={webhooks}
           onChange={(e) => setWebhooks(e.target.value)}
         />
         <button data-testid="notify-save" onClick={save}>
-          {saved ? "已保存" : "保存通知设置"}
+          {saved ? t("已保存") : t("保存通知设置")}
         </button>
       </div>
     </details>

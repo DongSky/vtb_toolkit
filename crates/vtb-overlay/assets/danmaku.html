@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VTB Toolkit · 直播评论</title>
+<style>
+.emoji{width:1.4em;height:1.4em;vertical-align:middle;object-fit:contain}
+html,body{margin:0;padding:0;background:transparent;overflow:hidden;font-family:var(--dm-font-family,system-ui,"Microsoft YaHei",sans-serif)}
+#list{height:100vh;width:min(100vw,var(--width,420px));box-sizing:border-box;padding:10px;display:flex;flex-direction:column;justify-content:flex-end;gap:var(--dm-line-gap,8px);overflow:hidden}
+.row{flex:none;padding:8px 12px;border-radius:var(--dm-radius,8px);background:var(--dm-bg,transparent);color:var(--dm-text,#fff);font-size:var(--dm-font-size,20px);line-height:1.4;overflow-wrap:anywhere;text-shadow:0 1px 3px #000b;animation:var(--animation, appear) .18s ease-out}
+.row .user{color:var(--dm-username,#a6dcff);font-weight:650;margin-right:8px}.row .platform{font-size:.6em;border:1px solid currentColor;padding:1px 4px;border-radius:4px;margin-right:7px;opacity:.8}
+.row .avatar{width:1.5em;height:1.5em;object-fit:cover;border-radius:50%;vertical-align:middle;margin-right:7px}.row .medal{font-size:.75em;margin-right:5px;background:var(--dm-medal-bg,#0288d1);padding:1px 3px;border-radius:3px}
+.row.sc{background:var(--dm-sc-bg,#9b630de6)}.row.gift{border-left:3px solid var(--dm-gift,#fa97c7)}.row.guard{border-left:3px solid var(--dm-guard,#c9a6ff)}.row .price{display:block;font-weight:750}.row .translation{display:block;color:#ffe2a0;font-size:.88em;margin-top:4px}.row .sticker{display:block;max-height:96px;max-width:160px}.row .time{font-size:.65em;opacity:.65;margin-right:6px}
+#status{display:none;position:fixed;top:10px;right:10px;padding:6px 10px;border-radius:6px;background:#111d;color:#ddd;font:12px system-ui}body.preview{background:repeating-conic-gradient(#202329 0% 25%,#292d34 0% 50%) 0 0/24px 24px}body.preview #status{display:block}
+@keyframes appear{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.row{animation:none}}
+</style></head>
+<body><div id="status" role="status">正在连接本地服务…</div><div id="list" role="log" aria-label="直播评论"></div><script src="/assets/chat.js"></script></body>
+</html>

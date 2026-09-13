@@ -1,6 +1,9 @@
+import { t, tm, useLocale } from "../i18n";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePersisted } from "../hooks/usePersisted";
+
+import YoutubeRooms from "./YoutubeRooms";
 
 export interface RoomCard {
   room_id: number;
@@ -18,6 +21,7 @@ export interface RoomCard {
 const STATUS: Record<number, string> = { 0: "未开播", 1: "直播中", 2: "轮播" };
 
 export default function RoomsPanel() {
+  useLocale();
   const [rooms, setRooms] = usePersisted<number[]>("rooms.list", []);
   const [outputDir] = usePersisted("rec.outputDir", "");
   const [cards, setCards] = useState<Record<number, RoomCard>>({});
@@ -71,21 +75,22 @@ export default function RoomsPanel() {
 
   return (
     <div className="panel" data-testid="rooms-panel">
-      <h2>房间管理</h2>
+      <h2>{t("房间管理")}</h2>
+      <YoutubeRooms />
+      <h3>Bilibili</h3>
       <div className="form-row">
         <input
           data-testid="rooms-add-input"
-          placeholder="房间号"
+          placeholder={t("房间号")}
           value={newRoom}
           onChange={(e) => setNewRoom(e.target.value)}
         />
         <button data-testid="rooms-add" disabled={!newRoom} onClick={addRoom}>
-          添加房间
-        </button>
+          {t("添加房间")}{" "}</button>
       </div>
       {error && (
         <div className="error" data-testid="rooms-error">
-          {error}
+          {tm(error)}
         </div>
       )}
       <div className="room-grid" data-testid="rooms-grid">
@@ -99,38 +104,35 @@ export default function RoomsPanel() {
                 <div className="room-cover placeholder" />
               )}
               <div className="room-body">
-                <div className="room-title">{c?.title || `房间 ${id}`}</div>
+                <div className="room-title">{c?.title || t("房间 {0}", id)}</div>
                 <div className="room-meta">
                   {c?.uname || "…"} · {c?.area || ""}
                   <span
                     className={`room-status s${c?.live_status ?? 0}`}
                     data-testid={`room-${id}-status`}
                   >
-                    {STATUS[c?.live_status ?? 0]}
+                    {t(STATUS[c?.live_status ?? 0])}
                   </span>
                 </div>
                 <div className="form-row">
                   {c?.danmaku_connected ? (
                     <button onClick={() => act("danmaku_disconnect", { roomId: c.real_room_id }, id)}>
-                      断开弹幕
-                    </button>
+                      {t("断开弹幕")}{" "}</button>
                   ) : (
                     <button
                       data-testid={`room-${id}-danmaku`}
                       onClick={() => act("danmaku_connect", { roomId: c?.real_room_id ?? id }, id)}
                     >
-                      连接弹幕
-                    </button>
+                      {t("连接弹幕")}{" "}</button>
                   )}
                   {c?.recording ? (
                     <button onClick={() => act("recorder_stop", { roomId: c.real_room_id }, id)}>
-                      停止录制
-                    </button>
+                      {t("停止录制")}{" "}</button>
                   ) : (
                     <button
                       data-testid={`room-${id}-record`}
                       disabled={!outputDir}
-                      title={outputDir ? "" : "请先在录制页设置输出目录"}
+                      title={outputDir ? "" : t("请先在录制页设置输出目录")}
                       onClick={() =>
                         act(
                           "recorder_start",
@@ -146,18 +148,16 @@ export default function RoomsPanel() {
                         )
                       }
                     >
-                      开始录制
-                    </button>
+                      {t("开始录制")}{" "}</button>
                   )}
                   <button className="danger" onClick={() => removeRoom(id)}>
-                    移除
-                  </button>
+                    {t("移除")}{" "}</button>
                 </div>
               </div>
             </div>
           );
         })}
-        {rooms.length === 0 && <p className="login-note">还没有房间，输入房间号添加。</p>}
+        {rooms.length === 0 && <p className="login-note">{t("还没有房间，输入房间号添加。")}</p>}
       </div>
     </div>
   );

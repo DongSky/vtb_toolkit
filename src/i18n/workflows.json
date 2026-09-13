@@ -1,0 +1,794 @@
+{
+  "上传中…": [
+    "Uploading…",
+    "アップロード中…"
+  ],
+  "【切片】{0}": [
+    "[Clip] {0}",
+    "【切り抜き】{0}"
+  ],
+  "虚拟主播": [
+    "VTuber",
+    "VTuber"
+  ],
+  "切片": [
+    "Clip",
+    "切り抜き"
+  ],
+  "投稿成功": [
+    "Upload completed",
+    "投稿が完了しました"
+  ],
+  "投稿失败: {0}": [
+    "Upload failed: {0}",
+    "投稿に失敗：{0}"
+  ],
+  "已导出: {0}": [
+    "Exported: {0}",
+    "書き出しました：{0}"
+  ],
+  "导出失败: {0}": [
+    "Export failed: {0}",
+    "書き出しに失敗：{0}"
+  ],
+  "录播复盘（高能进度条）": [
+    "Recording review (highlight timeline)",
+    "録画レビュー（ハイライトタイムライン）"
+  ],
+  "录制会话目录或离线处理输出目录": [
+    "Recording session or offline output directory",
+    "録画セッションまたはオフライン処理の出力フォルダー"
+  ],
+  "加载": [
+    "Load",
+    "読み込む"
+  ],
+  "红=弹幕密度 蓝=音频能量 橙色块=检出高能片段 绿线=手动打点 橙线=自动打点 黄线=SC 紫线=舰长。点击查看时间点，拖选后可导出切片。": [
+    "Red: chat density; blue: audio energy; orange blocks: highlights; green lines: manual markers; orange lines: automatic markers; yellow: Super Chats; purple: memberships. Click to seek or drag to export a range.",
+    "赤：チャット密度、青：音声エネルギー、橙の領域：ハイライト、緑線：手動マーカー、橙線：自動マーカー、黄線：SC、紫線：メンバーシップ。クリックで移動、ドラッグで範囲を選んで切り抜けます。"
+  ],
+  "时间点:": [
+    "Position:",
+    "位置："
+  ],
+  "选区:": [
+    "Selection:",
+    "選択範囲："
+  ],
+  "导出选区切片": [
+    "Export selected range",
+    "選択範囲を書き出す"
+  ],
+  "关闭预览": [
+    "Close preview",
+    "プレビューを閉じる"
+  ],
+  "预览录播": [
+    "Preview recording",
+    "録画をプレビュー"
+  ],
+  "代理副本生成中（重编码，需要一些时间）…": [
+    "Creating proxy (re-encoding; this may take a while)…",
+    "プロキシを作成中（再エンコードには時間がかかります）…"
+  ],
+  "代理副本已生成: {0}": [
+    "Proxy created: {0}",
+    "プロキシを作成しました：{0}"
+  ],
+  "代理生成失败: {0}": [
+    "Proxy creation failed: {0}",
+    "プロキシの作成に失敗：{0}"
+  ],
+  "生成 720p 代理副本": [
+    "Create 720p proxy",
+    "720p プロキシを作成"
+  ],
+  "高能片段（": [
+    "Highlights (",
+    "ハイライト（"
+  ],
+  "EDL 已导出: {0}": [
+    "EDL exported: {0}",
+    "EDL を書き出しました：{0}"
+  ],
+  "EDL 导出失败: {0}": [
+    "EDL export failed: {0}",
+    "EDL の書き出しに失敗：{0}"
+  ],
+  "导出剪辑工程 (EDL)": [
+    "Export edit timeline (EDL)",
+    "編集タイムラインを書き出す（EDL）"
+  ],
+  "时间戳清单已导出: {0}": [
+    "Timestamps exported: {0}",
+    "タイムスタンプを書き出しました：{0}"
+  ],
+  "时间戳导出失败: {0}": [
+    "Timestamp export failed: {0}",
+    "タイムスタンプの書き出しに失敗：{0}"
+  ],
+  "导出时间戳清单": [
+    "Export timestamps",
+    "タイムスタンプを書き出す"
+  ],
+  "FCPXML 已导出: {0}": [
+    "FCPXML exported: {0}",
+    "FCPXML を書き出しました：{0}"
+  ],
+  "FCPXML 导出失败: {0}": [
+    "FCPXML export failed: {0}",
+    "FCPXML の書き出しに失敗：{0}"
+  ],
+  "导出 FCPXML (达芬奇/FCP)": [
+    "Export FCPXML (Resolve / FCP)",
+    "FCPXML を書き出す（Resolve・FCP）"
+  ],
+  "剪映草稿已导出: {0}（复制到剪映草稿目录）": [
+    "Jianying draft exported: {0} (copy to Jianying's drafts folder)",
+    "剪映の下書きを書き出しました：{0}（剪映の下書きフォルダーにコピー）"
+  ],
+  "剪映导出失败: {0}": [
+    "Jianying export failed: {0}",
+    "剪映形式の書き出しに失敗：{0}"
+  ],
+  "导出剪映草稿": [
+    "Export Jianying draft",
+    "剪映の下書きを書き出す"
+  ],
+  "素材包已导出 ({0} 个文件): {1}": [
+    "Asset bundle exported ({0} files): {1}",
+    "素材パックを書き出しました（{0} ファイル）：{1}"
+  ],
+  "素材包导出失败: {0}": [
+    "Asset bundle export failed: {0}",
+    "素材パックの書き出しに失敗：{0}"
+  ],
+  "导出素材包": [
+    "Export asset bundle",
+    "素材パックを書き出す"
+  ],
+  "] 分数": [
+    "] Score ",
+    "］スコア "
+  ],
+  "打点与事件（": [
+    "Markers and events (",
+    "マーカーとイベント（"
+  ],
+  "⏱ 打点": [
+    "⏱ Marker",
+    "⏱ マーカー"
+  ],
+  "⚡ 自动": [
+    "⚡ Automatic",
+    "⚡ 自動"
+  ],
+  "场次报告": [
+    "Session report",
+    "セッションレポート"
+  ],
+  "弹幕": [
+    "Chat",
+    "チャット"
+  ],
+  "条 / 独立发言": [
+    " messages / unique viewers: ",
+    " 件・発言者 "
+  ],
+  "人 /": [
+    " / ",
+    " 人・"
+  ],
+  "暂无公开金额": [
+    "No disclosed revenue",
+    "公開された金額はありません"
+  ],
+  " / 另有 {0} 条付费或会员事件的币种/金额未公开": [
+    " / {0} other paid or membership events have no disclosed currency or amount",
+    "・ほか {0} 件の有料・メンバーイベントは通貨または金額が非公開です"
+  ],
+  "导出报告 (Markdown + SC CSV)": [
+    "Export report (Markdown + Super Chat CSV)",
+    "レポートを書き出す（Markdown・SC CSV）"
+  ],
+  "弹幕热词": [
+    "Popular chat words",
+    "チャットの頻出語"
+  ],
+  "发言榜": [
+    "Top chatters",
+    "発言ランキング"
+  ],
+  "关闭投稿表单": [
+    "Close upload form",
+    "投稿フォームを閉じる"
+  ],
+  "已有切片（": [
+    "Existing clips (",
+    "作成済みの切り抜き（"
+  ],
+  "预览": [
+    "Preview",
+    "プレビュー"
+  ],
+  "投稿 Bilibili": [
+    "Upload to Bilibili",
+    "Bilibili に投稿"
+  ],
+  "投稿 YouTube": [
+    "Upload to YouTube",
+    "YouTube に投稿"
+  ],
+  "未开播": [
+    "Offline",
+    "オフライン"
+  ],
+  "直播中": [
+    "Live",
+    "配信中"
+  ],
+  "轮播": [
+    "Replay",
+    "リプレイ配信"
+  ],
+  "房间管理": [
+    "Room management",
+    "ルーム管理"
+  ],
+  "添加房间": [
+    "Add room",
+    "ルームを追加"
+  ],
+  "房间 {0}": [
+    "Room {0}",
+    "ルーム {0}"
+  ],
+  "断开弹幕": [
+    "Disconnect chat",
+    "チャットを切断"
+  ],
+  "连接弹幕": [
+    "Connect chat",
+    "チャットに接続"
+  ],
+  "停止录制": [
+    "Stop recording",
+    "録画を停止"
+  ],
+  "请先在录制页设置输出目录": [
+    "Set an output directory in Recording first",
+    "先に録画画面で出力フォルダーを設定してください"
+  ],
+  "开始录制": [
+    "Start recording",
+    "録画を開始"
+  ],
+  "移除": [
+    "Remove",
+    "取り除く"
+  ],
+  "还没有房间，输入房间号添加。": [
+    "No rooms yet. Enter a room ID to add one.",
+    "ルームがありません。ルーム ID を入力して追加してください。"
+  ],
+  "实时字幕 / 同传": [
+    "Live subtitles / Translation",
+    "リアルタイム字幕・同時翻訳"
+  ],
+  "Bilibili 房间号 / YouTube 直播或频道链接": [
+    "Bilibili room ID / YouTube live or channel URL",
+    "Bilibili ルーム ID・YouTube の配信またはチャンネル URL"
+  ],
+  "启用同传翻译": [
+    "Translate live subtitles",
+    "字幕の同時翻訳を有効にする"
+  ],
+  "连接中…": [
+    "Connecting…",
+    "接続中…"
+  ],
+  "开始": [
+    "Start",
+    "開始"
+  ],
+  "背景色": [
+    "Background",
+    "背景色"
+  ],
+  "弹幕文字": [
+    "Chat text",
+    "チャットの文字色"
+  ],
+  "用户名": [
+    "Username",
+    "ユーザー名"
+  ],
+  "粉丝牌": [
+    "Fan badge",
+    "ファンバッジ"
+  ],
+  "SC 背景": [
+    "Super Chat background",
+    "SC の背景色"
+  ],
+  "礼物": [
+    "Gifts",
+    "ギフト"
+  ],
+  "行距": [
+    "Row spacing",
+    "行間"
+  ],
+  "圆角": [
+    "Corner radius",
+    "角丸"
+  ],
+  "字体": [
+    "Font family",
+    "フォント"
+  ],
+  "{0} 副本": [
+    "{0} copy",
+    "{0} のコピー"
+  ],
+  "主题名": [
+    "Theme name",
+    "テーマ名"
+  ],
+  "入场动画": [
+    "Entry animation",
+    "表示アニメーション"
+  ],
+  "无": [
+    "None",
+    "なし"
+  ],
+  "淡入": [
+    "Fade",
+    "フェード"
+  ],
+  "滑入": [
+    "Slide",
+    "スライド"
+  ],
+  "显示粉丝牌": [
+    "Show fan badges",
+    "ファンバッジを表示"
+  ],
+  "显示时间": [
+    "Show timestamps",
+    "時刻を表示"
+  ],
+  "保存主题": [
+    "Save theme",
+    "テーマを保存"
+  ],
+  "导出到剪贴板": [
+    "Export to clipboard",
+    "クリップボードへ書き出す"
+  ],
+  "粘贴主题 JSON 后点击导入": [
+    "Paste theme JSON, then click Import",
+    "テーマの JSON を貼り付けて「読み込み」を押してください"
+  ],
+  "导入": [
+    "Import",
+    "読み込み"
+  ],
+  "弹幕语音朗读（TTS）": [
+    "Read chat aloud (TTS)",
+    "チャットの読み上げ（TTS）"
+  ],
+  "开启弹幕朗读（连接弹幕后生效）": [
+    "Enable chat speech (after connecting chat)",
+    "チャットを読み上げる（チャット接続後に有効）"
+  ],
+  "只朗读 SC / 礼物 / 上舰": [
+    "Read only Super Chats, gifts and memberships",
+    "SC・ギフト・メンバー加入のみ読み上げる"
+  ],
+  "仅 macOS 支持（使用系统 say 命令）。": [
+    "Supported on macOS only (uses the system say command).",
+    "macOS のみ対応（システムの say コマンドを使用）。"
+  ],
+  "YouTube 直播或频道": [
+    "YouTube stream or channel",
+    "YouTube の配信・チャンネル"
+  ],
+  "直播链接、频道链接、@频道或视频 ID": [
+    "Stream URL, channel URL, @handle or video ID",
+    "配信 URL・チャンネル URL・@ハンドル・動画 ID"
+  ],
+  "连接 YouTube": [
+    "Connect YouTube",
+    "YouTube に接続"
+  ],
+  "添加频道 / 直播": [
+    "Add channel / stream",
+    "チャンネル・配信を追加"
+  ],
+  "匿名读取公开直播评论；录制需要 yt-dlp 和 FFmpeg。频道链接会跟踪后续直播。": [
+    "Public live chat is read anonymously. Recording needs yt-dlp and FFmpeg. Channel URLs follow future streams.",
+    "公開配信のチャットを匿名で取得します。録画には yt-dlp と FFmpeg が必要です。チャンネル URL は今後の配信も追跡します。"
+  ],
+  "等待开播": [
+    "Waiting for stream",
+    "配信開始待ち"
+  ],
+  "查询中": [
+    "Loading status",
+    "状態を取得中"
+  ],
+  "断开评论": [
+    "Disconnect comments",
+    "チャットを切断"
+  ],
+  "连接评论": [
+    "Connect comments",
+    "チャットに接続"
+  ],
+  "停止监听录制": [
+    "Stop monitoring",
+    "録画の監視を停止"
+  ],
+  "移除收藏": [
+    "Remove favorite",
+    "お気に入りから削除"
+  ],
+  " · 录制评论日志中": [
+    " · Saving recording chat log",
+    "・録画用チャットログを保存中"
+  ],
+  "断开评论预览": [
+    "Disconnect chat preview",
+    "チャットプレビューを切断"
+  ],
+  "虚拟主播,切片": [
+    "VTuber,clips",
+    "VTuber,切り抜き"
+  ],
+  "投稿到 YouTube": [
+    "Upload to YouTube",
+    "YouTube に投稿"
+  ],
+  "YouTube 投稿账号": [
+    "YouTube upload account",
+    "YouTube 投稿アカウント"
+  ],
+  "读取评论和录制无需此授权。投稿需在 Google Cloud 启用 YouTube Data API v3，创建「桌面应用」OAuth 客户端；应用处于测试模式时，将自己的 Google 账号加入测试用户。": [
+    "Reading comments and recording do not require this authorization. To upload, enable YouTube Data API v3 in Google Cloud and create a Desktop app OAuth client. In testing mode, add your Google account as a test user.",
+    "チャット取得と録画にこの認証は不要です。投稿するには Google Cloud で YouTube Data API v3 を有効にし、「デスクトップ アプリ」の OAuth クライアントを作成してください。テスト中は自分の Google アカウントをテストユーザーに追加します。"
+  ],
+  "Google OAuth 客户端 ID": [
+    "Google OAuth client ID",
+    "Google OAuth クライアント ID"
+  ],
+  "客户端 ID（…apps.googleusercontent.com）": [
+    "Client ID (…apps.googleusercontent.com)",
+    "クライアント ID（…apps.googleusercontent.com）"
+  ],
+  "Google OAuth 客户端密钥": [
+    "Google OAuth client secret",
+    "Google OAuth クライアントシークレット"
+  ],
+  "客户端密钥": [
+    "Client secret",
+    "クライアントシークレット"
+  ],
+  "保存投稿客户端": [
+    "Save upload client",
+    "投稿クライアントを保存"
+  ],
+  "客户端配置和授权凭据保存在系统凭据库。": [
+    "Client configuration and authorization credentials are saved in the OS credential store.",
+    "クライアント設定と認証情報は OS の資格情報ストアに保存されます。"
+  ],
+  "重新授权": [
+    "Authorize again",
+    "再認証"
+  ],
+  "在浏览器授权 YouTube": [
+    "Authorize YouTube in browser",
+    "ブラウザーで YouTube を認証"
+  ],
+  "清除本机授权": [
+    "Clear local authorization",
+    "この端末の認証情報を削除"
+  ],
+  "标题": [
+    "Title",
+    "タイトル"
+  ],
+  "YouTube 投稿标题": [
+    "YouTube video title",
+    "YouTube 投稿タイトル"
+  ],
+  "描述": [
+    "Description",
+    "説明"
+  ],
+  "YouTube 投稿描述": [
+    "YouTube video description",
+    "YouTube 投稿の説明"
+  ],
+  "标签（逗号分隔）": [
+    "Tags (comma-separated)",
+    "タグ（カンマ区切り）"
+  ],
+  "可见性": [
+    "Visibility",
+    "公開設定"
+  ],
+  "YouTube 可见性": [
+    "YouTube visibility",
+    "YouTube の公開設定"
+  ],
+  "私享": [
+    "Private",
+    "非公開"
+  ],
+  "不公开列出": [
+    "Unlisted",
+    "限定公開"
+  ],
+  "公开": [
+    "Public",
+    "公開"
+  ],
+  "此视频是面向儿童的内容": [
+    "This video is made for kids",
+    "この動画は子ども向けです"
+  ],
+  "上传到 YouTube（": [
+    "Upload to YouTube (",
+    "YouTube にアップロード（"
+  ],
+  "请先到「账号」页配置并授权 YouTube 投稿。": [
+    "Set up and authorize YouTube uploads in Accounts first.",
+    "先に「アカウント」画面で YouTube 投稿の設定と認証を行ってください。"
+  ],
+  "请在浏览器完成授权。": [
+    "Complete authorization in your browser.",
+    "ブラウザーで認証を完了してください。"
+  ],
+  "取消": [
+    "Cancel",
+    "キャンセル"
+  ],
+  "授权": [
+    "authorization",
+    "認証"
+  ],
+  "上传": [
+    "upload",
+    "アップロード"
+  ],
+  "查看已上传视频": [
+    "View uploaded video",
+    "投稿した動画を開く"
+  ],
+  "录制": [
+    "Recording",
+    "録画"
+  ],
+  "实时字幕": [
+    "Subtitles",
+    "リアルタイム字幕"
+  ],
+  "离线处理": [
+    "Offline",
+    "オフライン処理"
+  ],
+  "复盘": [
+    "Review",
+    "レビュー"
+  ],
+  "OBS输出": [
+    "OBS output",
+    "OBS 出力"
+  ],
+  "经典白": [
+    "Classic light",
+    "クラシック・ライト"
+  ],
+  "夜间黑": [
+    "Night dark",
+    "ナイト・ダーク"
+  ],
+  "OBS透明叠加": [
+    "Transparent OBS overlay",
+    "OBS 透明オーバーレイ"
+  ],
+  "无效的主题文件": [
+    "Invalid theme file",
+    "無効なテーマファイルです"
+  ],
+  "[表情]": [
+    "[Emoji]",
+    "［絵文字］"
+  ],
+  "YouTube 观众": [
+    "YouTube viewer",
+    "YouTube 視聴者"
+  ],
+  "频道会员": [
+    "Channel member",
+    "チャンネルメンバー"
+  ],
+  "赠送频道会员": [
+    "Gifted memberships",
+    "メンバーシップギフト"
+  ],
+  "请输入 YouTube 直播/频道链接或 11 位视频 ID": [
+    "Enter a YouTube live/channel URL or an 11-character video ID",
+    "YouTube の配信・チャンネル URL、または 11 文字の動画 ID を入力してください"
+  ],
+  "无效的 YouTube 视频 ID": [
+    "Invalid YouTube video ID",
+    "YouTube 動画 ID が無効です"
+  ],
+  "不支持的 YouTube 链接": [
+    "Unsupported YouTube URL",
+    "対応していない YouTube URL です"
+  ],
+  "无法解析 YouTube 频道": [
+    "Unable to resolve YouTube channel",
+    "YouTube チャンネルを取得できません"
+  ],
+  "正在连接 YouTube 评论": [
+    "Connecting to YouTube chat",
+    "YouTube チャットに接続中"
+  ],
+  "YouTube 未返回评论续传标记": [
+    "YouTube returned no chat continuation token",
+    "YouTube からチャット継続用トークンが返されませんでした"
+  ],
+  "评论连接已结束，正在检查直播状态": [
+    "Chat connection ended; checking stream status",
+    "チャット接続が終了しました。配信状態を確認中"
+  ],
+  "YouTube 评论已连接（匿名）": [
+    "YouTube chat connected (anonymous)",
+    "YouTube チャットに接続済み（匿名）"
+  ],
+  "直播已结束或评论已关闭": [
+    "Stream ended or chat is disabled",
+    "配信が終了したか、チャットが無効になっています"
+  ],
+  "已断开": [
+    "Disconnected",
+    "切断しました"
+  ],
+  "直播尚未开始": [
+    "Stream has not started yet",
+    "配信はまだ開始していません"
+  ],
+  "当前没有正在直播的场次": [
+    "No stream is live right now",
+    "現在ライブ配信はありません"
+  ],
+  "该直播未开放评论": [
+    "Chat is disabled for this stream",
+    "この配信のチャットは無効です"
+  ],
+  "不支持的 YouTube 操作": [
+    "Unsupported YouTube operation",
+    "対応していない YouTube 操作です"
+  ],
+  "评论恢复失败：{0}": [
+    "Unable to restore chat: {0}",
+    "チャットの復元に失敗：{0}"
+  ],
+  "界面语言": [
+    "Interface language",
+    "表示言語"
+  ],
+  "使用教程": [
+    "User guide",
+    "使い方ガイド"
+  ],
+  "语言设置保存失败，重启后可能恢复原语言。": [
+    "Could not save the language preference. It may reset after restart.",
+    "言語設定を保存できませんでした。再起動後に元の言語に戻る可能性があります。"
+  ],
+  "启动中…": [
+    "Starting…",
+    "起動中…"
+  ],
+  "（": [
+    " (",
+    "（"
+  ],
+  "）": [
+    ")",
+    "）"
+  ],
+  "已有热词表（{0}）": [
+    "Saved glossaries ({0})",
+    "保存済み用語集（{0}）"
+  ],
+  "（{0} 词条）": [
+    " ({0} entries)",
+    "（{0} 語）"
+  ],
+  "合并 {0} 个表": [
+    "Merge {0} glossaries",
+    "{0} 件の用語集を結合"
+  ],
+  "「{0}」词条（{1}）": [
+    "Entries in “{0}” ({1})",
+    "「{0}」の語句（{1}）"
+  ],
+  "高能片段（{0}）": [
+    "Highlights ({0})",
+    "ハイライト（{0}）"
+  ],
+  "打点与事件（{0}）": [
+    "Markers and events ({0})",
+    "マーカーとイベント（{0}）"
+  ],
+  "已有切片（{0}）": [
+    "Exported clips ({0})",
+    "出力済み切り抜き（{0}）"
+  ],
+  "弹幕 {0} 条 / 独立发言 {1} 人 / ": [
+    "{0} messages / {1} unique viewers / ",
+    "チャット {0} 件 / 発言者 {1} 人 / "
+  ],
+  "候选帧与生成图（{0}，勾选作参考图）": [
+    "Frames and generated images ({0}; select references)",
+    "候補フレームと生成画像（{0} 件・参照画像を選択）"
+  ],
+  "上传到 YouTube（{0}）": [
+    "Upload to YouTube ({0})",
+    "YouTube にアップロード（{0}）"
+  ],
+  "取消授权": [
+    "Cancel authorization",
+    "認証をキャンセル"
+  ],
+  "取消上传": [
+    "Cancel upload",
+    "アップロードをキャンセル"
+  ],
+  "房间 {0} 监听中": [
+    "Monitoring room {0}",
+    "ルーム {0} を監視中"
+  ],
+  "备注 {0}": [
+    "Note for {0}",
+    "{0} のメモ"
+  ],
+  "疑似高能 {0}": [
+    "Possible highlight: {0}",
+    "ハイライト候補：{0}"
+  ],
+  "已打点 {0}（自动）": [
+    "Automatic marker added: {0}",
+    "自動マーカーを追加：{0}"
+  ],
+  "已打点 {0}": [
+    "Marker added: {0}",
+    "マーカーを追加：{0}"
+  ],
+  "录制开始后可打点（Ctrl/Cmd+Shift+M）": [
+    "Markers available while recording (Ctrl/Cmd+Shift+M)",
+    "録画中にマーカーを追加できます（Ctrl/Cmd+Shift+M）"
+  ],
+  "教程打开失败: {0}": [
+    "Could not open the guide: {0}",
+    "ガイドを開けません：{0}"
+  ],
+  "语音识别语种": [
+    "Speech language",
+    "音声認識の言語"
+  ],
+  "翻译目标语种": [
+    "Translation target",
+    "翻訳先の言語"
+  ],
+  "自动检测": [
+    "Auto-detect",
+    "自動判定"
+  ]
+}

@@ -76,7 +76,7 @@ impl RecordingSession {
     /// the stem — used by supervised sessions whose parts may vary.
     pub fn finalize_media(&self, stem: &str) -> Result<SessionMetadata> {
         let segments =
-            collect_segments(&self.output_dir, stem, &["flv", "ts", "mkv", "m4s"])?;
+            collect_segments(&self.output_dir, stem, &["flv", "ts", "mkv", "m4s", "mp4"])?;
         Ok(SessionMetadata {
             room_id: self.room_id,
             title: self.title.clone(),
@@ -130,8 +130,7 @@ mod tests {
         std::fs::write(dir.path().join("roomA_001.flv"), b"bb").unwrap();
         std::fs::write(dir.path().join("unrelated.flv"), b"zzz").unwrap();
 
-        let session =
-            RecordingSession::start(7, Some("测试直播".into()), dir.path());
+        let session = RecordingSession::start(7, Some("测试直播".into()), dir.path());
         let meta = session.finalize("roomA", "flv").unwrap();
 
         assert_eq!(meta.room_id, 7);

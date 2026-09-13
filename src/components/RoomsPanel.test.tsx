@@ -6,6 +6,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+
 import RoomsPanel from "./RoomsPanel";
 
 function card(id: number, live = 1) {

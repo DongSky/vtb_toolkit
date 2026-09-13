@@ -164,8 +164,7 @@ pub fn plan_cleanup(
     // 3. Space-based: delete oldest until projected free ≥ target.
     if let Some(target) = policy.target_free_bytes {
         if free_now < target {
-            let mut projected = free_now
-                + victims.iter().map(|v| v.bytes).sum::<u64>();
+            let mut projected = free_now + victims.iter().map(|v| v.bytes).sum::<u64>();
             for s in &by_age {
                 if projected >= target {
                     break;
@@ -198,8 +197,10 @@ pub fn run_cleanup(
     let free_now = free_space_fn(root).unwrap_or(u64::MAX);
     let plan = plan_cleanup(&sessions, policy, keep, free_now, SystemTime::now());
 
-    let sizes: std::collections::HashMap<&Path, u64> =
-        sessions.iter().map(|s| (s.path.as_path(), s.bytes)).collect();
+    let sizes: std::collections::HashMap<&Path, u64> = sessions
+        .iter()
+        .map(|s| (s.path.as_path(), s.bytes))
+        .collect();
     let mut report = CleanupReport::default();
     for path in plan {
         let bytes = sizes.get(path.as_path()).copied().unwrap_or(0);
@@ -209,6 +210,56 @@ pub fn run_cleanup(
                 report.deleted.push(path);
             }
             Err(e) => tracing::warn!("retention: failed to delete {}: {e}", path.display()),
+        }
+    }
+    report
+}
+
+/// Cleanup for one platform source; only our manifested sessions are eligible.
+pub fn run_source_cleanup(root: &Path, policy: &RetentionPolicy, keep: &Path) -> CleanupReport {
+    if policy.is_noop() {
+        return CleanupReport::default();
+    }
+    let Ok(canonical_root) = root.canonicalize() else {
+        return CleanupReport::default();
+    };
+    let sessions: Vec<SessionDir> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && e.path().join("recording.meta.json").is_file()
+        })
+        .map(|e| SessionDir {
+            path: e.path(),
+            room_id: 0,
+            modified: e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+            bytes: dir_size(&e.path()),
+        })
+        .collect();
+    let victims = plan_cleanup(
+        &sessions,
+        policy,
+        Some(keep),
+        crate::disk::free_space(root).unwrap_or(u64::MAX),
+        SystemTime::now(),
+    );
+    let mut report = CleanupReport::default();
+    for path in victims {
+        let Ok(resolved) = path.canonicalize() else {
+            continue;
+        };
+        if resolved == canonical_root || !resolved.starts_with(&canonical_root) {
+            continue;
+        }
+        let bytes = dir_size(&path);
+        if std::fs::remove_dir_all(&path).is_ok() {
+            report.freed_bytes += bytes;
+            report.deleted.push(path);
         }
     }
     report
@@ -312,13 +363,7 @@ mod tests {
             target_free_bytes: Some(u64::MAX),
             ..Default::default()
         };
-        let plan = plan_cleanup(
-            &sessions,
-            &policy,
-            Some(&active.path),
-            0,
-            SystemTime::now(),
-        );
+        let plan = plan_cleanup(&sessions, &policy, Some(&active.path), 0, SystemTime::now());
         assert!(plan.is_empty(), "active session must be protected");
     }
 

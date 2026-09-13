@@ -18,6 +18,7 @@ import SubtitlePanel from "./SubtitlePanel";
 
 beforeEach(() => {
   invokeMock.mockReset();
+  invokeMock.mockResolvedValue(undefined);
   for (const k of Object.keys(listenHandlers)) delete listenHandlers[k];
 });
 
@@ -36,13 +37,18 @@ describe("SubtitlePanel", () => {
     fireEvent.change(screen.getByTestId("sub-model"), {
       target: { value: "/m/ggml-small.bin" },
     });
+    fireEvent.change(screen.getByLabelText("语音识别语种"), { target: { value: "ja" } });
+    fireEvent.click(screen.getByTestId("sub-translate"));
+    fireEvent.change(screen.getByLabelText("翻译目标语种"), { target: { value: "en" } });
     fireEvent.click(screen.getByTestId("sub-start"));
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith("live_subtitle_start", {
         options: {
           room_id: 77,
           model_path: "/m/ggml-small.bin",
-          translate: false,
+          asr_lang: "ja",
+          target_lang: "en",
+          translate: true,
           llm_provider: undefined,
           llm_base_url: undefined,
           llm_model: undefined,

@@ -10,8 +10,14 @@ use vtb_danmaku::{spawn_managed, DanmakuClientConfig, ManagedEvent};
 
 #[tokio::main]
 async fn main() {
-    let room: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(320);
-    let secs: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(30);
+    let room: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(320);
+    let secs: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
 
     // 1. Overlay server.
     let publisher = vtb_overlay::publisher();
@@ -24,12 +30,9 @@ async fn main() {
     assert!(page.status().is_success());
 
     // 3. WS client (what the OBS browser source does).
-    let (ws, _) = tokio_tungstenite::connect_async(format!(
-        "ws://127.0.0.1:{}/ws",
-        server.port
-    ))
-    .await
-    .unwrap();
+    let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}/ws", server.port))
+        .await
+        .unwrap();
     let (_w, mut read) = ws.split();
     let ws_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let wc = ws_count.clone();
@@ -38,7 +41,10 @@ async fn main() {
         while let Some(Ok(msg)) = read.next().await {
             if let Ok(text) = msg.into_text() {
                 if first {
-                    println!("WS 首条消息: {}", &text.chars().take(120).collect::<String>());
+                    println!(
+                        "WS 首条消息: {}",
+                        &text.chars().take(120).collect::<String>()
+                    );
                     first = false;
                 }
                 wc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -61,7 +67,7 @@ async fn main() {
             _ = tokio::time::sleep_until(deadline) => break,
             ev = rx.recv() => match ev {
                 Some(ManagedEvent::Live(live)) => {
-                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku { event: live, tid: None });
+                    publisher.publish(vtb_overlay::OverlayMessage::Danmaku { source: None, event: live, tid: None });
                     published += 1;
                 }
                 Some(_) => {}

@@ -29,6 +29,7 @@ pub fn note_key(uid: u64, username: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UserNote {
+    pub key: String,
     pub uid: u64,
     pub username: String,
     pub note: String,
@@ -38,6 +39,7 @@ pub struct UserNote {
 /// Aggregated viewer history across every recorded session.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UserProfile {
+    pub revenue_by_currency: std::collections::BTreeMap<String, f64>,
     pub uid: u64,
     pub username: String,
     pub danmaku_count: u64,
@@ -57,15 +59,19 @@ impl StatsDb {
     }
 
     /// Set (or clear, with an empty note) a user's 备注.
-    pub fn set_note(
+    pub fn set_note(&self, uid: u64, username: &str, note: &str, now: DateTime<Utc>) -> Result<()> {
+        self.set_note_with_key(&note_key(uid, username), uid, username, note, now)
+    }
+
+    pub fn set_note_with_key(
         &self,
+        key: &str,
         uid: u64,
         username: &str,
         note: &str,
         now: DateTime<Utc>,
     ) -> Result<()> {
         self.ensure_notes_schema()?;
-        let key = note_key(uid, username);
         if note.trim().is_empty() {
             self.conn
                 .execute("DELETE FROM user_notes WHERE key = ?1", params![key])?;
@@ -87,10 +93,11 @@ impl StatsDb {
     pub fn list_notes(&self) -> Result<Vec<UserNote>> {
         self.ensure_notes_schema()?;
         let mut stmt = self.conn.prepare(
-            "SELECT uid, username, note, updated_at FROM user_notes ORDER BY updated_at DESC",
+            "SELECT uid, username, note, updated_at, key FROM user_notes ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(UserNote {
+                key: r.get(4)?,
                 uid: r.get::<_, i64>(0)? as u64,
                 username: r.get(1)?,
                 note: r.get(2)?,
@@ -102,17 +109,23 @@ impl StatsDb {
 
     /// Viewer history by uid (uid != 0) or username (anonymous data).
     pub fn user_profile(&self, uid: u64, username: &str) -> Result<UserProfile> {
+        self.user_profile_with_key(uid, username, &note_key(uid, username))
+    }
+
+    pub fn user_profile_with_key(
+        &self,
+        uid: u64,
+        username: &str,
+        key: &str,
+    ) -> Result<UserProfile> {
         self.ensure_notes_schema()?;
-        let (filter, arg): (&str, String) = if uid != 0 {
-            ("uid = ?1", uid.to_string())
-        } else {
-            ("username = ?1", username.to_string())
-        };
+        let filter = "COALESCE(user_key, CASE WHEN uid != 0 THEN 'uid:' || uid ELSE 'name:' || username END) = ?1";
+        let arg = key;
         let sql = format!(
             "SELECT
                COUNT(CASE WHEN kind = 'danmaku' THEN 1 END),
-               COALESCE(SUM(CASE WHEN kind = 'super_chat' THEN price END), 0),
-               COALESCE(SUM(CASE WHEN kind = 'gift' THEN price END), 0),
+               COALESCE(SUM(CASE WHEN kind = 'super_chat' AND currency = 'CNY' THEN price END), 0),
+               COALESCE(SUM(CASE WHEN kind = 'gift' AND currency = 'CNY' THEN price END), 0),
                COUNT(CASE WHEN kind = 'guard_buy' THEN 1 END),
                COUNT(DISTINCT session_id),
                MIN(received_at),
@@ -121,6 +134,7 @@ impl StatsDb {
         );
         let profile = self.conn.query_row(&sql, params![arg], |r| {
             Ok(UserProfile {
+                revenue_by_currency: Default::default(),
                 uid,
                 username: username.to_string(),
                 danmaku_count: r.get::<_, i64>(0)? as u64,
@@ -137,11 +151,21 @@ impl StatsDb {
             .conn
             .query_row(
                 "SELECT note FROM user_notes WHERE key = ?1",
-                params![note_key(uid, username)],
+                params![key],
                 |r| r.get::<_, String>(0),
             )
             .optional()?;
-        Ok(UserProfile { note, ..profile })
+        let sql = format!("SELECT currency, SUM(price) FROM events WHERE {filter} AND currency IS NOT NULL AND price IS NOT NULL GROUP BY currency");
+        let revenue_by_currency = self
+            .conn
+            .prepare(&sql)?
+            .query_map([key], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(UserProfile {
+            note,
+            revenue_by_currency,
+            ..profile
+        })
     }
 }
 
@@ -169,7 +193,8 @@ mod tests {
         let db = StatsDb::open_memory().unwrap();
         let now = Utc::now();
         db.set_note(42, "老观众", "三年舰长", now).unwrap();
-        db.set_note(42, "老观众改名", "三年舰长，改过名", now).unwrap();
+        db.set_note(42, "老观众改名", "三年舰长，改过名", now)
+            .unwrap();
         let notes = db.list_notes().unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].username, "老观众改名");

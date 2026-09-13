@@ -19,6 +19,7 @@ body {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -260,10 +261,19 @@ button:disabled {
 
 .theme-editor label {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   font-size: 13px;
+}
+
+.theme-editor label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+}
+.theme-editor input:not([type="checkbox"]), .theme-editor select {
+  width: 100%;
+  min-width: 0;
 }
 
 .theme-editor-actions {
@@ -463,3 +473,21 @@ button.danger {
 .cover-gen {
   margin-top: 10px;
 }
+
+.dm-platform { font-size: 10px; opacity: .7; margin-right: 6px; border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px; }
+.app-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.app-toolbar strong { margin-right: auto; letter-spacing: .02em; }
+.language-control { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 13px; }
+.language-control select { width: auto; min-width: 112px; }
+.form-row { flex-wrap: wrap; }
+.form-col, .form-row, .panel, .app { min-width: 0; }
+input, textarea, select { max-width: 100%; box-sizing: border-box; }
+button, label, summary, .hint, .login-note { overflow-wrap: anywhere; }
+.tabs { gap: 6px; }
+.ai-settings fieldset { border: 1px solid #7775; border-radius: 8px; padding: 14px; margin: 12px 0; }
+.ai-settings .form-col > label { display: flex; flex-direction: column; gap: 6px; }
+.ai-settings label.ai-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.ai-settings [role="tab"][aria-selected="true"] { background: #387fb8; color: white; }
+.ai-effective { border-top: 1px solid #7775; padding-top: 4px; overflow-wrap: anywhere; }
+.ai-effective dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 18px; }
+.ai-effective dd { margin: 0; }

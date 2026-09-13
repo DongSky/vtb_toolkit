@@ -55,19 +55,20 @@ impl AnthropicBackend {
 #[async_trait]
 impl LlmBackend for AnthropicBackend {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let resp = self
+        let mut request = self
             .http
             .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&json!({
                 "model": self.model,
                 "max_tokens": self.max_tokens,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
-            }))
-            .send()
-            .await?;
+            }));
+        if !self.api_key.is_empty() {
+            request = request.header("x-api-key", &self.api_key);
+        }
+        let resp = request.send().await?;
 
         let status = resp.status().as_u16();
         let body = resp.text().await?;
@@ -120,10 +121,9 @@ impl OpenAiCompatBackend {
 #[async_trait]
 impl LlmBackend for OpenAiCompatBackend {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let resp = self
+        let mut request = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
             .json(&json!({
                 "model": self.model,
                 "messages": [
@@ -131,9 +131,11 @@ impl LlmBackend for OpenAiCompatBackend {
                     {"role": "user", "content": user},
                 ],
                 "max_tokens": self.max_tokens,
-            }))
-            .send()
-            .await?;
+            }));
+        if !self.api_key.is_empty() {
+            request = request.bearer_auth(&self.api_key);
+        }
+        let resp = request.send().await?;
 
         let status = resp.status().as_u16();
         let body = resp.text().await?;

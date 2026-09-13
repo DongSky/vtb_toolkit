@@ -37,10 +37,7 @@ pub async fn twitch_connect(
                 let guard = translate.lock().unwrap();
                 if let Some(h) = guard.as_ref() {
                     if !h.task.is_finished()
-                        && vtb_translate::danmaku::should_translate_danmaku(
-                            &d.text,
-                            &h.target_lang,
-                        )
+                        && vtb_translate::danmaku::should_translate_danmaku(&d.text, &h.target_lang)
                     {
                         let id = super::danmaku_translate::next_tid();
                         if h.tx.try_send((id, d.text.clone())).is_ok() {
@@ -50,6 +47,7 @@ pub async fn twitch_connect(
                 }
             }
             publisher.publish(vtb_overlay::OverlayMessage::Danmaku {
+                source: None,
                 event: live.clone(),
                 tid,
             });
@@ -86,10 +84,7 @@ pub async fn twitch_connect(
 }
 
 #[tauri::command]
-pub async fn twitch_disconnect(
-    state: State<'_, AppState>,
-    channel: String,
-) -> Result<(), String> {
+pub async fn twitch_disconnect(state: State<'_, AppState>, channel: String) -> Result<(), String> {
     let channel = channel.trim().trim_start_matches('#').to_lowercase();
     if let Some(h) = state.twitch.lock().unwrap().remove(&channel) {
         let _ = h.stop.send(true);

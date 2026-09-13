@@ -41,6 +41,16 @@ struct EventRow<'a> {
 }
 
 impl StatsDb {
+    pub fn delete_source_events(
+        &self,
+        session: &str,
+        room_key: &str,
+        message: Option<&str>,
+        user: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute("DELETE FROM events WHERE session_id=?1 AND json_extract(source_json,'$.platform') || ':' || json_extract(source_json,'$.room_id') = ?2 AND ((?3 IS NOT NULL AND json_extract(source_json,'$.message_id')=?3) OR (?4 IS NOT NULL AND json_extract(source_json,'$.user_id')=?4))",params![session,room_key,message,user])?;
+        Ok(())
+    }
     /// Open (creating if needed) a stats database at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -58,6 +68,23 @@ impl StatsDb {
 
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA)?;
+        // Additive migration: existing Bilibili records retain their CNY values.
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(events)")?
+            .query_map([], |r| r.get(1))?
+            .collect::<std::result::Result<_, _>>()?;
+        for (name, definition) in [
+            ("user_key", "TEXT"),
+            ("source_json", "TEXT"),
+            ("currency", "TEXT DEFAULT 'CNY'"),
+            ("price_display", "TEXT"),
+        ] {
+            if !columns.iter().any(|c| c == name) {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE events ADD COLUMN {name} {definition}"
+                ))?;
+            }
+        }
         Ok(Self { conn })
     }
 
@@ -69,6 +96,16 @@ impl StatsDb {
         session_id: &str,
         ev: &LiveEvent,
         received_at: DateTime<Utc>,
+    ) -> Result<()> {
+        self.record_with_source(session_id, ev, received_at, None)
+    }
+
+    pub fn record_with_source(
+        &self,
+        session_id: &str,
+        ev: &LiveEvent,
+        received_at: DateTime<Utc>,
+        source: Option<&vtb_common::EventSource>,
     ) -> Result<()> {
         let row = match ev {
             LiveEvent::Danmaku(d) => EventRow {
@@ -137,8 +174,8 @@ impl StatsDb {
         };
 
         self.conn.execute(
-            "INSERT INTO events (session_id, room_id, received_at, kind, uid, username, text, price, count, level)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO events (session_id, room_id, received_at, kind, uid, username, text, price, count, level, user_key, source_json, currency, price_display)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 session_id,
                 row.room_id as i64,
@@ -147,9 +184,13 @@ impl StatsDb {
                 row.uid as i64,
                 row.username,
                 row.text,
-                row.price,
+                source.map(|s| s.money.as_ref().and_then(|m| m.amount)).unwrap_or(row.price),
                 row.count,
                 row.level,
+                source.and_then(|s| s.user_key()).unwrap_or_else(|| crate::note_key(row.uid, row.username)),
+                source.and_then(|s| serde_json::to_string(s).ok()),
+                source.map(|s| s.money.as_ref().and_then(|m| m.currency.as_deref())).unwrap_or(Some("CNY")),
+                source.and_then(|s| s.money.as_ref().map(|m| m.display.as_str())),
             ],
         )?;
         Ok(())

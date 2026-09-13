@@ -1,0 +1,234 @@
+{
+  "设置": [
+    "Settings",
+    "設定"
+  ],
+  "AI 服务": [
+    "AI services",
+    "AI サービス"
+  ],
+  "文本模型": [
+    "Text model",
+    "テキストモデル"
+  ],
+  "视觉模型": [
+    "Vision model",
+    "画像認識モデル"
+  ],
+  "图片生成": [
+    "Image generation",
+    "画像生成"
+  ],
+  "用于弹幕和字幕翻译、语义粗剪、热词整理及封面创意。": [
+    "For chat/subtitle translation, semantic clips, glossary cleanup and cover ideas.",
+    "チャット・字幕翻訳、意味解析による切り抜き、用語整理、サムネイル案に使用します。"
+  ],
+  "用于画面扫描与高光复核，需要支持图片输入的模型。": [
+    "For frame analysis and highlight review. Requires a model that accepts images.",
+    "映像解析とハイライト確認に使用します。画像入力対応のモデルが必要です。"
+  ],
+  "用于封面文生图和参考图编辑，使用独立的地址、模型和密钥。": [
+    "For cover generation and reference-image edits, with a separate endpoint, model and key.",
+    "サムネイル生成と参照画像の編集に使用します。接続先・モデル・キーは独立した設定です。"
+  ],
+  "已保存设置": [
+    "Saved settings",
+    "保存済み設定"
+  ],
+  "环境变量": [
+    "Environment",
+    "環境変数"
+  ],
+  "默认值": [
+    "Default",
+    "既定値"
+  ],
+  "系统凭据库": [
+    "System credential store",
+    "OS の資格情報ストア"
+  ],
+  "无需认证": [
+    "No authentication",
+    "認証なし"
+  ],
+  "未配置": [
+    "Not configured",
+    "未設定"
+  ],
+  "重试": [
+    "Retry",
+    "再試行"
+  ],
+  "加载中…": [
+    "Loading…",
+    "読み込み中…"
+  ],
+  "配置已保存，新任务将使用此配置；运行中的任务需停止后重新开始。": [
+    "Saved. New tasks use these settings; restart running tasks to apply them.",
+    "保存しました。新しいタスクに適用されます。実行中のタスクは停止後に再開してください。"
+  ],
+  "已清除当前服务的已保存密钥；如允许环境变量回退，将使用环境变量。": [
+    "Saved key cleared for this service. Environment fallback still applies if enabled.",
+    "このサービスの保存済みキーを消去しました。環境変数の代替利用が有効な場合は引き続き参照します。"
+  ],
+  "语音识别使用本地 Whisper，不需要 API Key。以下配置用于可选的在线 AI 功能。": [
+    "Speech recognition uses local Whisper and needs no API key. These settings are for optional online AI features.",
+    "音声認識はローカルの Whisper を使用し、API キーは不要です。以下は任意のオンライン AI 機能の設定です。"
+  ],
+  "复用文本模型配置": [
+    "Use text model settings",
+    "テキストモデルの設定を共有"
+  ],
+  "允许环境变量回退": [
+    "Allow environment fallback",
+    "環境変数による代替設定を許可"
+  ],
+  "无需认证（用于不要求 Key 的本地服务）": [
+    "No authentication (local services that require no key)",
+    "認証なし（キー不要のローカルサービス用）"
+  ],
+  "留空保留该服务的已保存密钥，输入可更新": [
+    "Leave blank to keep this service’s saved key; enter a new key to replace it",
+    "空欄ならこのサービスの保存済みキーを保持し、入力すると更新します"
+  ],
+  "密钥按用途、服务类型和地址隔离，保存在系统凭据库，不写入普通配置文件。": [
+    "Keys are isolated by purpose, provider and endpoint, and stored in the system credential store rather than ordinary settings files.",
+    "キーは用途・サービス種類・接続先ごとに分離し、通常の設定ファイルではなく OS の資格情報ストアに保存します。"
+  ],
+  "有未保存的修改，请先保存再测试。": [
+    "Unsaved changes. Save before testing.",
+    "未保存の変更があります。保存後にテストしてください。"
+  ],
+  "保存配置": [
+    "Save settings",
+    "設定を保存"
+  ],
+  "测试连接": [
+    "Test connection",
+    "接続テスト"
+  ],
+  "清除已保存密钥": [
+    "Clear saved key",
+    "保存済みキーを消去"
+  ],
+  "图片测试只查询模型列表，不生成图片；通过不代表图片生成或编辑权限已验证。": [
+    "Image testing only queries the model list. It does not generate images or verify generation/edit permissions.",
+    "画像のテストはモデル一覧の照会のみです。画像を生成せず、生成・編集権限は確認しません。"
+  ],
+  "连接测试发送固定的短测试内容；视觉测试附带测试图片，可能产生少量 API 费用。": [
+    "Connection tests send fixed short sample content; vision tests include a sample image and may incur a small API charge.",
+    "接続テストでは固定の短文を送信します。画像認識テストはサンプル画像を含み、少額の API 料金が発生する場合があります。"
+  ],
+  "当前生效配置": [
+    "Effective saved configuration",
+    "現在有効な保存済み設定"
+  ],
+  "服务地址": [
+    "Endpoint",
+    "接続先"
+  ],
+  "密钥来源": [
+    "Key source",
+    "キーの参照元"
+  ],
+  "已保存密钥优先于环境变量。环境变量中的密钥只用于该环境指定的地址或对应官方地址。": [
+    "Saved keys take priority over environment variables. Environment keys are only used with the matching environment endpoint or official default.",
+    "保存済みキーを環境変数より優先します。環境変数のキーは同じ環境で指定した接続先、または公式の既定接続先にのみ使用します。"
+  ],
+  "AI 服务在设置页统一配置，保存后用于新任务。": [
+    "Configure AI services in Settings. Saved changes apply to new tasks.",
+    "AI サービスは設定画面で管理します。保存後、新しいタスクに適用されます。"
+  ],
+  "打开 AI 服务设置": [
+    "Open AI service settings",
+    "AI サービス設定を開く"
+  ],
+  "AI 生成封面": [
+    "Generate an AI cover",
+    "AI でサムネイル生成"
+  ],
+  "图片尺寸": [
+    "Image size",
+    "画像サイズ"
+  ],
+  "正在生成封面图…": [
+    "Generating cover image…",
+    "サムネイル画像を生成中…"
+  ],
+  "请输入完整的 HTTP 或 HTTPS 服务地址": [
+    "Enter a complete HTTP or HTTPS endpoint",
+    "完全な HTTP または HTTPS の接続先を入力してください"
+  ],
+  "服务地址不能包含账号、密码、查询参数或片段": [
+    "Endpoint must not include credentials, query parameters or fragments",
+    "接続先にアカウント・パスワード・クエリ・フラグメントは含められません"
+  ],
+  "不支持的 AI 服务类型": [
+    "Unsupported AI provider",
+    "未対応の AI サービス種類です"
+  ],
+  "请先配置 API Key，或选择无需认证的本地服务": [
+    "Configure an API key or select a local service without authentication",
+    "API キーを設定するか、認証不要のローカルサービスを選択してください"
+  ],
+  "无法创建连接测试客户端": [
+    "Could not initialize connection testing",
+    "接続テストを初期化できません"
+  ],
+  "连接失败，请检查服务地址、网络或证书": [
+    "Connection failed. Check the endpoint, network or certificate.",
+    "接続できません。接続先・ネットワーク・証明書を確認してください。"
+  ],
+  "连接测试失败（HTTP {0}）": [
+    "Connection test failed (HTTP {0})",
+    "接続テストに失敗しました（HTTP {0}）"
+  ],
+  "服务返回了无法识别的响应": [
+    "The service returned an unrecognized response",
+    "サービスの応答形式を認識できません"
+  ],
+  "模型列表中未找到指定模型，图片生成尚未验证": [
+    "The specified model was not listed; image generation remains unverified",
+    "指定モデルが一覧にありません。画像生成は未確認です"
+  ],
+  "模型查询通过；尚未执行图片生成或编辑": [
+    "Model lookup passed; image generation and edits were not performed",
+    "モデル照会に成功しました。画像生成・編集は実行していません"
+  ],
+  "视觉连接测试通过": [
+    "Vision connection test passed",
+    "画像認識の接続テストに成功しました"
+  ],
+  "文本连接测试通过": [
+    "Text connection test passed",
+    "テキストの接続テストに成功しました"
+  ],
+  "服务返回了空内容或不兼容的响应格式": [
+    "The service returned empty content or an incompatible response",
+    "空の内容または互換性のない応答形式です"
+  ],
+  "无法访问系统凭据库，请检查系统凭据服务": [
+    "Cannot access the system credential store. Check the credential service.",
+    "OS の資格情報ストアにアクセスできません。資格情報サービスを確認してください。"
+  ],
+  "AI 配置文件格式无效": [
+    "Invalid AI settings format",
+    "AI 設定ファイルの形式が無効です"
+  ],
+  "AI 配置暂时不可用": [
+    "AI settings are temporarily unavailable",
+    "AI 設定を現在利用できません"
+  ],
+  "请先在设置 → AI 服务中配置 API Key": [
+    "Configure your API key in Settings → AI services first",
+    "設定 → AI サービスで API キーを設定してください"
+  ],
+  "无需认证时不能保存 API Key": [
+    "Cannot save an API key when authentication is disabled",
+    "認証なしの場合は API キーを保存できません"
+  ],
+  "请到文本模型中管理共用密钥": [
+    "Manage the shared key under Text model",
+    "共有キーはテキストモデルで管理してください"
+  ]
+}

@@ -13,6 +13,36 @@ use vtb_common::LiveEvent;
 pub struct LogEntry {
     pub received_at: DateTime<Utc>,
     pub event: LiveEvent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<vtb_common::EventSource>,
+}
+
+/// Deletions are appended separately so capture history remains auditable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatDeletion {
+    pub received_at: DateTime<Utc>,
+    pub room_key: String,
+    pub message_id: Option<String>,
+    pub user_id: Option<String>,
+}
+impl ChatDeletion {
+    pub fn matches(&self, entry: &LogEntry) -> bool {
+        entry.received_at <= self.received_at
+            && entry.source.as_ref().is_some_and(|source| {
+                source.room_key() == self.room_key
+                    && ((self.message_id.is_some() && self.message_id == source.message_id)
+                        || (self.user_id.is_some() && self.user_id == source.user_id))
+            })
+    }
+    pub fn append(&self, session: &Path) -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(session.join("moderation.jsonl"))?;
+        serde_json::to_writer(&mut file, self)?;
+        file.write_all(b"\n")?;
+        Ok(())
+    }
 }
 
 /// Append entries to a JSONL log file.
@@ -63,6 +93,16 @@ pub fn read_log(path: &Path) -> Result<Vec<LogEntry>> {
             Ok(e) => out.push(e),
             Err(e) => tracing::warn!("skipping malformed log line {}: {e}", i + 1),
         }
+    }
+    let moderation = path.with_file_name("moderation.jsonl");
+    if moderation.exists() {
+        let file = std::fs::File::open(moderation)?;
+        let deletions: Vec<ChatDeletion> = BufReader::new(file)
+            .lines()
+            .map_while(std::result::Result::ok)
+            .filter_map(|line| serde_json::from_str(&line).ok())
+            .collect();
+        out.retain(|entry| !deletions.iter().any(|deletion| deletion.matches(entry)));
     }
     Ok(out)
 }
@@ -134,6 +174,7 @@ mod tests {
     fn danmaku_at(secs: i64) -> LogEntry {
         let ts = Utc.timestamp_opt(1_700_000_000 + secs, 0).single().unwrap();
         LogEntry {
+            source: None,
             received_at: ts,
             event: LiveEvent::Danmaku(DanmakuMsg {
                 room_id: 1,
@@ -162,6 +203,36 @@ mod tests {
         let entries = read_log(&path).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0], danmaku_at(0));
+    }
+
+    #[test]
+    fn moderation_filters_only_older_events_from_the_matching_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("danmaku.jsonl");
+        let source: vtb_common::EventSource = serde_json::from_value(serde_json::json!({"platform":"youtube","room_id":"video","user_id":"author","message_id":"first"})).unwrap();
+        let mut older = danmaku_at(1);
+        older.source = Some(source.clone());
+        let mut later = danmaku_at(10);
+        later.source = Some(source.clone());
+        let mut other = danmaku_at(1);
+        other.source = Some(source);
+        other.source.as_mut().unwrap().room_id = "other".into();
+        let entries = [older, later.clone(), other.clone(), danmaku_at(1)];
+        let mut writer = DanmakuLogWriter::create(&path).unwrap();
+        for entry in &entries {
+            writer.write(entry).unwrap();
+        }
+        writer.flush().unwrap();
+        ChatDeletion {
+            received_at: danmaku_at(5).received_at,
+            room_key: "youtube:video".into(),
+            user_id: Some("author".into()),
+            message_id: None,
+        }
+        .append(dir.path())
+        .unwrap();
+        assert_eq!(read_log(&path).unwrap(), vec![later, other, danmaku_at(1)]);
+        assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 4);
     }
 
     #[test]

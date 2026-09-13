@@ -1,5 +1,5 @@
 //! 封面辅助 commands: candidate frame extraction, LLM cover-design ideas,
-//! and gpt-image-2 concept-image generation. All operate on an offline
+//! and configurable concept-image generation. All operate on an offline
 //! analysis directory (highlights.json / signals.json / transcript.json /
 //! stats DB), writing into `<dir>/cover/`.
 
@@ -7,9 +7,7 @@ use super::review::discover_source_video;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use vtb_common::Highlight;
-use vtb_highlight::cover::{
-    self, CoverIdea, IdeasContext, ImageGenClient, ImageGenConfig,
-};
+use vtb_highlight::cover::{self, CoverIdea, IdeasContext, ImageGenClient, ImageGenConfig};
 
 fn read_highlights(dir: &Path) -> Vec<Highlight> {
     std::fs::read_to_string(dir.join("highlights.json"))
@@ -81,8 +79,7 @@ async fn stats_summary(app: &AppHandle, dir: &Path) -> String {
 
     for candidate in candidates {
         let Ok(report) =
-            super::stats::stats_report(app.clone(), candidate.to_string_lossy().into_owned())
-                .await
+            super::stats::stats_report(app.clone(), candidate.to_string_lossy().into_owned()).await
         else {
             continue;
         };
@@ -144,10 +141,7 @@ pub async fn cover_ideas(
         extra_text: extra_text.unwrap_or_default(),
     };
     // Nothing to reason about → refuse rather than hallucinate.
-    if ctx.highlights.is_empty()
-        && ctx.transcript_excerpt.is_empty()
-        && ctx.extra_text.is_empty()
-    {
+    if ctx.highlights.is_empty() && ctx.transcript_excerpt.is_empty() && ctx.extra_text.is_empty() {
         return Err("缺少直播内容信息（高能/字幕/补充文本均为空）".into());
     }
     ctx.highlights.truncate(8);
@@ -177,12 +171,6 @@ pub async fn cover_ideas(
 pub struct CoverGenOptions {
     pub dir: String,
     pub prompt: String,
-    /// gpt-image-2 endpoint (base URL / key / model / size). All required
-    /// so the user controls exactly which endpoint is billed.
-    pub base_url: String,
-    pub api_key: String,
-    #[serde(default)]
-    pub model: Option<String>,
     #[serde(default)]
     pub size: Option<String>,
     /// Auxiliary text appended to the prompt.
@@ -195,13 +183,13 @@ pub struct CoverGenOptions {
     pub n: Option<u32>,
 }
 
-/// Generate cover concept images via a gpt-image-2 endpoint. Saves PNGs
+/// Generate cover concept images using the saved image service. Saves PNGs
 /// to `<dir>/cover/gen_*.png` and returns their paths.
 #[tauri::command]
-pub async fn cover_generate(options: CoverGenOptions) -> Result<Vec<String>, String> {
-    if options.api_key.trim().is_empty() || options.base_url.trim().is_empty() {
-        return Err("请填写图像生成 API Base URL 与 Key".into());
-    }
+pub async fn cover_generate(
+    app: AppHandle,
+    options: CoverGenOptions,
+) -> Result<Vec<String>, String> {
     let mut prompt = options.prompt.trim().to_string();
     if let Some(extra) = &options.extra_text {
         if !extra.trim().is_empty() {
@@ -213,14 +201,11 @@ pub async fn cover_generate(options: CoverGenOptions) -> Result<Vec<String>, Str
         return Err("请填写图像生成 prompt".into());
     }
 
+    let service = super::ai::resolve_service(&app, vtb_translate::settings::ServiceKind::Image)?;
     let mut cfg = ImageGenConfig::new(
-        options.base_url.trim(),
-        options.api_key.trim(),
-        options
-            .model
-            .clone()
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or_else(|| "gpt-image-2".into()),
+        service.public.base_url,
+        service.api_key.unwrap_or_default(),
+        service.public.model,
     );
     if let Some(size) = options.size.filter(|s| !s.trim().is_empty()) {
         cfg.size = size;
@@ -246,11 +231,7 @@ pub async fn cover_generate(options: CoverGenOptions) -> Result<Vec<String>, Str
     let existing = std::fs::read_dir(&cover_dir)
         .map(|rd| {
             rd.flatten()
-                .filter(|e| {
-                    e.file_name()
-                        .to_string_lossy()
-                        .starts_with("gen_")
-                })
+                .filter(|e| e.file_name().to_string_lossy().starts_with("gen_"))
                 .count()
         })
         .unwrap_or(0);
@@ -272,7 +253,12 @@ pub async fn cover_list(dir: String) -> Result<Vec<String>, String> {
             let p = e.path();
             if p.extension()
                 .and_then(|x| x.to_str())
-                .map(|x| matches!(x.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp"))
+                .map(|x| {
+                    matches!(
+                        x.to_ascii_lowercase().as_str(),
+                        "jpg" | "jpeg" | "png" | "webp"
+                    )
+                })
                 .unwrap_or(false)
             {
                 out.push(p.to_string_lossy().into_owned());
@@ -286,22 +272,6 @@ pub async fn cover_list(dir: String) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn generate_rejects_missing_credentials() {
-        let opts = CoverGenOptions {
-            dir: "/tmp".into(),
-            prompt: "p".into(),
-            base_url: "".into(),
-            api_key: "".into(),
-            model: None,
-            size: None,
-            extra_text: None,
-            reference_images: vec![],
-            n: None,
-        };
-        assert!(cover_generate(opts).await.is_err());
-    }
 
     #[tokio::test]
     async fn cover_list_reads_dir() {
@@ -322,12 +292,10 @@ mod tests {
     async fn extract_frames_requires_highlights() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("highlights.json"), "[]").unwrap();
-        assert!(cover_extract_frames(
-            dir.path().to_string_lossy().into_owned(),
-            None,
-            None
-        )
-        .await
-        .is_err());
+        assert!(
+            cover_extract_frames(dir.path().to_string_lossy().into_owned(), None, None)
+                .await
+                .is_err()
+        );
     }
 }

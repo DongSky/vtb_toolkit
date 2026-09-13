@@ -1,6 +1,10 @@
 //! Offline job orchestration: recording file → transcript → translation →
 //! subtitles → highlights → clips, with per-stage progress reporting.
 
+use crate::ai_clips::{
+    analyze_transcript, fuse_candidates, visual_moments_to_highlights, visual_timestamps,
+    AiClipConfig,
+};
 use crate::danmaku_log;
 use crate::danmaku_xml;
 use crate::energy::rms_series;
@@ -16,10 +20,8 @@ use vtb_asr::engine::AsrEngine;
 use vtb_asr::streaming::{transcribe_buffer, StreamingConfig};
 use vtb_common::{Highlight, TranscriptSegment, TranslatedSegment};
 use vtb_highlight::fusion::{detect_highlights, FusionConfig, SignalSet};
-use vtb_highlight::signals::{danmaku_density, gift_value, keyword_score, audio_energy_scores};
-use vtb_translate::{
-    translate_batch, BatchConfig, LlmBackend, StreamerProfile, TranslateConfig,
-};
+use vtb_highlight::signals::{audio_energy_scores, danmaku_density, gift_value, keyword_score};
+use vtb_translate::{translate_batch, BatchConfig, LlmBackend, StreamerProfile, TranslateConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +31,8 @@ pub enum Stage {
     Translate,
     ExportSubtitles,
     DetectHighlights,
+    AnalyzeSemantic,
+    AnalyzeVisual,
     CutClips,
     Done,
 }
@@ -66,6 +70,11 @@ pub struct JobConfig {
     pub window_ms: u64,
     /// 歌切: detect sustained music/song segments and cut them separately.
     pub song_clips: bool,
+    /// Discover clip candidates from timestamped ASR text.
+    pub semantic_highlights: bool,
+    /// Discover clip candidates by scanning timestamped video frames.
+    pub visual_highlights: bool,
+    pub ai_clips: AiClipConfig,
 }
 
 impl JobConfig {
@@ -84,6 +93,9 @@ impl JobConfig {
             burn_subtitles: false,
             window_ms: 10_000,
             song_clips: false,
+            semantic_highlights: false,
+            visual_highlights: false,
+            ai_clips: AiClipConfig::default(),
         }
     }
 }
@@ -102,6 +114,12 @@ pub struct JobOutput {
     /// Per-window signal curves (高能进度条 data).
     #[serde(default)]
     pub signals_json: Option<PathBuf>,
+    /// Normalized candidates produced by transcript semantic analysis.
+    #[serde(default)]
+    pub semantic_candidates_json: Option<PathBuf>,
+    /// Normalized candidates produced by global frame analysis.
+    #[serde(default)]
+    pub visual_candidates_json: Option<PathBuf>,
     /// Timestamp list (打点+高能, B站评论格式), when a marker log existed.
     #[serde(default)]
     pub timestamps_txt: Option<PathBuf>,
@@ -119,7 +137,9 @@ pub struct OfflineJob {
     config: JobConfig,
     asr: Arc<dyn AsrEngine>,
     translator: Option<Arc<dyn LlmBackend>>,
+    semantic_backend: Option<Arc<dyn LlmBackend>>,
     judge: Option<Arc<dyn vtb_highlight::multimodal::MultimodalJudge>>,
+    visual_analyzer: Option<Arc<dyn vtb_highlight::multimodal::VisualMomentAnalyzer>>,
     profile: StreamerProfile,
     progress: Option<mpsc::Sender<JobProgress>>,
 }
@@ -146,7 +166,9 @@ impl OfflineJob {
             config,
             asr,
             translator: None,
+            semantic_backend: None,
             judge: None,
+            visual_analyzer: None,
             profile: StreamerProfile::default(),
             progress: None,
         }
@@ -158,6 +180,19 @@ impl OfflineJob {
         judge: Arc<dyn vtb_highlight::multimodal::MultimodalJudge>,
     ) -> Self {
         self.judge = Some(judge);
+        self
+    }
+
+    pub fn with_semantic_backend(mut self, backend: Arc<dyn LlmBackend>) -> Self {
+        self.semantic_backend = Some(backend);
+        self
+    }
+
+    pub fn with_visual_analyzer(
+        mut self,
+        analyzer: Arc<dyn vtb_highlight::multimodal::VisualMomentAnalyzer>,
+    ) -> Self {
+        self.visual_analyzer = Some(analyzer);
         self
     }
 
@@ -199,8 +234,7 @@ impl OfflineJob {
         // 1. Extract audio.
         self.report(Stage::ExtractAudio, None, "提取音频").await;
         let pcm =
-            vtb_asr::audio::extract_audio_ffmpeg(&self.config.ffmpeg, &self.config.input)
-                .await?;
+            vtb_asr::audio::extract_audio_ffmpeg(&self.config.ffmpeg, &self.config.input).await?;
         let total_ms = (pcm.len() as u64 * 1000) / vtb_asr::SAMPLE_RATE as u64;
 
         // 2. Transcribe.
@@ -208,7 +242,10 @@ impl OfflineJob {
         out.transcript =
             transcribe_buffer(self.asr.clone(), &pcm, self.config.streaming.clone()).await;
         let transcript_json = self.config.output_dir.join("transcript.json");
-        std::fs::write(&transcript_json, serde_json::to_string_pretty(&out.transcript)?)?;
+        std::fs::write(
+            &transcript_json,
+            serde_json::to_string_pretty(&out.transcript)?,
+        )?;
 
         // 3. Translate (optional): bounded-concurrency batch with retries.
         if self.config.translate {
@@ -266,7 +303,8 @@ impl OfflineJob {
 
         // 5. Highlights.
         if self.config.highlights {
-            self.report(Stage::DetectHighlights, None, "检测高能片段").await;
+            self.report(Stage::DetectHighlights, None, "检测高能片段")
+                .await;
             let window_ms = self.config.window_ms.max(1000);
             let audio = audio_energy_scores(&rms_series(&pcm, 1000), window_ms, total_ms);
 
@@ -277,8 +315,7 @@ impl OfflineJob {
 
             // Danmaku signals when a log + session start are available.
             let entries;
-            if let (Some(log), Some(start)) =
-                (&self.config.danmaku_log, self.config.session_start)
+            if let (Some(log), Some(start)) = (&self.config.danmaku_log, self.config.session_start)
             {
                 entries = danmaku_log::read_log(log)?;
                 // Export a Bilibili-compatible XML alongside the analysis.
@@ -299,8 +336,7 @@ impl OfflineJob {
             // The marker log lives next to the danmaku log in the session
             // directory the recorder produced.
             let mut marker_offsets = Vec::new();
-            if let (Some(log), Some(start)) =
-                (&self.config.danmaku_log, self.config.session_start)
+            if let (Some(log), Some(start)) = (&self.config.danmaku_log, self.config.session_start)
             {
                 if let Some(session_dir) = log.parent() {
                     match markers::read_markers(session_dir) {
@@ -318,6 +354,94 @@ impl OfflineJob {
                         Err(e) => tracing::warn!("marker log read failed: {e}"),
                     }
                 }
+            }
+
+            // Audience-independent discovery. These candidates are separate
+            // evidence sources rather than extra coefficients in the chat
+            // z-score, so a quiet room can still produce useful rough cuts.
+            let mut ai_candidates = Vec::new();
+            if self.config.semantic_highlights {
+                let backend = self.semantic_backend.as_deref().ok_or_else(|| {
+                    PipelineError::Config(
+                        "semantic_highlights=true but no LLM backend is configured".into(),
+                    )
+                })?;
+                self.report(Stage::AnalyzeSemantic, None, "分析转录语义高光")
+                    .await;
+                let semantic =
+                    analyze_transcript(backend, &out.transcript, total_ms, &self.config.ai_clips)
+                        .await;
+                let path = self.config.output_dir.join("semantic_candidates.json");
+                std::fs::write(&path, serde_json::to_string_pretty(&semantic)?)?;
+                out.semantic_candidates_json = Some(path);
+                ai_candidates.extend(semantic);
+            }
+
+            if self.config.visual_highlights {
+                let analyzer = self.visual_analyzer.as_deref().ok_or_else(|| {
+                    PipelineError::Config(
+                        "visual_highlights=true but no vision backend is configured".into(),
+                    )
+                })?;
+                let timestamps = visual_timestamps(total_ms, &self.config.ai_clips);
+                let batch_size = self.config.ai_clips.visual_batch_size.max(1);
+                let batches = timestamps.len().div_ceil(batch_size).max(1);
+                let mut visual = Vec::new();
+                for (index, batch) in timestamps.chunks(batch_size).enumerate() {
+                    self.report(
+                        Stage::AnalyzeVisual,
+                        Some(index as f64 / batches as f64),
+                        format!("抽帧分析 {}/{}", index + 1, batches),
+                    )
+                    .await;
+                    let frames = match vtb_highlight::multimodal::extract_frames_at(
+                        &self.config.ffmpeg,
+                        &self.config.input,
+                        batch,
+                    )
+                    .await
+                    {
+                        Ok(frames) => frames,
+                        Err(e) => {
+                            tracing::warn!("visual frame batch skipped: {e}");
+                            continue;
+                        }
+                    };
+                    let (Some(first), Some(last)) = (frames.first(), frames.last()) else {
+                        continue;
+                    };
+                    let half_step = self.config.ai_clips.visual_sample_ms / 2;
+                    let batch_start = first.at_ms.saturating_sub(half_step);
+                    let batch_end = last.at_ms.saturating_add(half_step).min(total_ms);
+                    let text = excerpt(&out.transcript, batch_start, batch_end);
+                    let analyzed = match analyzer.analyze_timeline(&frames, &text).await {
+                        Ok(moments) => Ok(moments),
+                        Err(first) => {
+                            tracing::warn!("visual highlight batch will retry once: {first}");
+                            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+                            analyzer.analyze_timeline(&frames, &text).await
+                        }
+                    };
+                    match analyzed {
+                        Ok(moments) => visual.extend(visual_moments_to_highlights(
+                            moments,
+                            batch,
+                            total_ms,
+                            &self.config.ai_clips,
+                        )),
+                        Err(e) => tracing::warn!("visual highlight batch ignored: {e}"),
+                    }
+                }
+                let path = self.config.output_dir.join("visual_candidates.json");
+                std::fs::write(&path, serde_json::to_string_pretty(&visual)?)?;
+                out.visual_candidates_json = Some(path);
+                ai_candidates.extend(visual);
+            }
+
+            if self.config.semantic_highlights || self.config.visual_highlights {
+                let mut all = std::mem::take(&mut out.highlights);
+                all.extend(ai_candidates);
+                out.highlights = fuse_candidates(all, total_ms, &self.config.ai_clips);
             }
 
             // Optional multimodal rescoring: sample frames from each
@@ -407,8 +531,7 @@ impl OfflineJob {
                     format!("切片 {}/{}", i + 1, n),
                 )
                 .await;
-                match vtb_highlight::clip::cut_clip(&self.config.ffmpeg, &clip_opts, h).await
-                {
+                match vtb_highlight::clip::cut_clip(&self.config.ffmpeg, &clip_opts, h).await {
                     Ok(path) => out.clip_files.push(path),
                     Err(e) => tracing::warn!("clip cut failed: {e}"),
                 }
@@ -467,11 +590,24 @@ mod tests {
     async fn generate_test_video(path: &Path) {
         let st = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=10",
-                "-f", "lavfi", "-i",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=6:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
                 "sine=frequency=440:duration=6,volume='if(lt(mod(t,2),1),1.0,0.0)':eval=frame",
-                "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
                 "-shortest",
             ])
             .arg(path)
@@ -492,9 +628,18 @@ mod tests {
         generate_test_video(&video).await;
 
         let engine = Arc::new(MockEngine::new(vec![
-            Recognition { text: "第一段".into(), lang: Some("zh".into()) },
-            Recognition { text: "第二段".into(), lang: Some("zh".into()) },
-            Recognition { text: "第三段".into(), lang: Some("zh".into()) },
+            Recognition {
+                text: "第一段".into(),
+                lang: Some("zh".into()),
+            },
+            Recognition {
+                text: "第二段".into(),
+                lang: Some("zh".into()),
+            },
+            Recognition {
+                text: "第三段".into(),
+                lang: Some("zh".into()),
+            },
         ]));
 
         let mut cfg = JobConfig::new(&video, dir.path().join("out"));
@@ -583,6 +728,7 @@ mod tests {
             for i in 0..20 {
                 let ts = start + chrono::Duration::milliseconds(2000 + i * 40);
                 w.write(&LogEntry {
+                    source: None,
                     received_at: ts,
                     event: LiveEvent::Danmaku(DanmakuMsg {
                         room_id: 1,
@@ -680,8 +826,8 @@ mod tests {
         // single window are flat → no candidates).
         cfg.window_ms = 1000;
 
-        let job = OfflineJob::new(cfg, Arc::new(MockEngine::empty()))
-            .with_judge(Arc::new(MockJudge));
+        let job =
+            OfflineJob::new(cfg, Arc::new(MockEngine::empty())).with_judge(Arc::new(MockJudge));
         let out = job.run().await.unwrap();
         assert!(!out.highlights.is_empty(), "need candidates for this test");
         for h in &out.highlights {
@@ -690,8 +836,7 @@ mod tests {
             assert_eq!(h.signals.multimodal, Some(0.9));
         }
         // Persisted highlights carry the titles too.
-        let json =
-            std::fs::read_to_string(dir.path().join("out/highlights.json")).unwrap();
+        let json = std::fs::read_to_string(dir.path().join("out/highlights.json")).unwrap();
         assert!(json.contains("AI标题"));
     }
 }

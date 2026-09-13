@@ -71,7 +71,7 @@ describe("ReviewPanel", () => {
       "弹幕 42 条",
     );
     expect(screen.getByTestId("review-report").textContent).toContain(
-      "¥35.5",
+      "CNY 35.50",
     );
     // Word cloud + top chatters rendered from previously-ignored fields.
     expect(screen.getByTestId("word-cloud")).toBeInTheDocument();
@@ -81,19 +81,12 @@ describe("ReviewPanel", () => {
     );
   });
 
-  it("opens the built-in preview player via the asset protocol", async () => {
+  it("previews a recording before offline analysis via the asset protocol", async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "config_load") return Promise.resolve({});
       if (cmd === "review_load")
         return Promise.resolve({
-          signals: {
-            window_ms: 10000,
-            total_ms: 60000,
-            density: [1, 2],
-            keyword: null,
-            gift: null,
-            audio: null,
-          },
+          signals: null,
           highlights: [],
           clips: ["/x/clips/a.mp4"],
           video: "/x/rec.flv",

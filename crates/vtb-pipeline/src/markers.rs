@@ -122,16 +122,17 @@ pub fn hms(ms: u64) -> String {
 
 /// Render a plain-text timestamp list (markers + highlights merged,
 /// sorted) ready to paste into a B站 comment or video description.
-pub fn timestamp_list(
-    markers: &[OffsetMarker],
-    highlights: &[vtb_common::Highlight],
-) -> String {
+pub fn timestamp_list(markers: &[OffsetMarker], highlights: &[vtb_common::Highlight]) -> String {
     let mut lines: Vec<(u64, String)> = Vec::new();
     for m in markers {
-        let label = m.marker.note.clone().unwrap_or_else(|| match m.marker.kind {
-            MarkerKind::Auto => "高能时刻".into(),
-            MarkerKind::Manual => "打点".into(),
-        });
+        let label = m
+            .marker
+            .note
+            .clone()
+            .unwrap_or_else(|| match m.marker.kind {
+                MarkerKind::Auto => "高能时刻".into(),
+                MarkerKind::Manual => "打点".into(),
+            });
         lines.push((m.at_ms, label));
     }
     for h in highlights {
@@ -163,6 +164,9 @@ pub fn merge_marker_highlights(
         if m.marker.kind != MarkerKind::Manual {
             continue; // auto markers came from the same signals fusion saw
         }
+        if m.at_ms >= total_ms {
+            continue;
+        }
         if let Some(h) = highlights
             .iter_mut()
             .find(|h| h.start_ms <= m.at_ms && m.at_ms <= h.end_ms)
@@ -174,7 +178,7 @@ pub fn merge_marker_highlights(
             continue;
         }
         let start_ms = m.at_ms.saturating_sub(pre_ms);
-        let end_ms = (m.at_ms + post_ms).min(total_ms.max(m.at_ms + post_ms));
+        let end_ms = m.at_ms.saturating_add(post_ms).min(total_ms);
         highlights.push(vtb_common::Highlight {
             start_ms,
             end_ms,
@@ -244,7 +248,11 @@ mod tests {
 
     #[test]
     fn offsets_drop_pre_session_markers() {
-        let markers = vec![manual_at(-10, None), manual_at(0, None), manual_at(90, None)];
+        let markers = vec![
+            manual_at(-10, None),
+            manual_at(0, None),
+            manual_at(90, None),
+        ];
         let offsets = to_offsets(&markers, at(0));
         assert_eq!(offsets.len(), 2);
         assert_eq!(offsets[0].at_ms, 0);
@@ -300,7 +308,13 @@ mod tests {
             source: "realtime".into(),
             note: None,
         };
-        merge_marker_highlights(&mut hs, &to_offsets(&[auto], at(0)), 15_000, 15_000, 100_000);
+        merge_marker_highlights(
+            &mut hs,
+            &to_offsets(&[auto], at(0)),
+            15_000,
+            15_000,
+            100_000,
+        );
         assert!(hs.is_empty());
     }
 
@@ -310,5 +324,14 @@ mod tests {
         let markers = to_offsets(&[manual_at(5, None)], at(0));
         merge_marker_highlights(&mut hs, &markers, 15_000, 15_000, 100_000);
         assert_eq!(hs[0].start_ms, 0);
+    }
+
+    #[test]
+    fn marker_end_clamps_to_recording_and_late_marker_is_dropped() {
+        let mut hs = vec![];
+        let markers = to_offsets(&[manual_at(95, None), manual_at(120, None)], at(0));
+        merge_marker_highlights(&mut hs, &markers, 15_000, 15_000, 100_000);
+        assert_eq!(hs.len(), 1);
+        assert_eq!(hs[0].end_ms, 100_000);
     }
 }

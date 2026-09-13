@@ -45,6 +45,9 @@ src-tauri/gen/
 # Rust
 target/
 
+# Optional project-local build tools (for example LLVM/libclang on Windows)
+.tools/
+
 # recordings / models (large artifacts)
 recordings/
 models/

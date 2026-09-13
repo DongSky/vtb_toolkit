@@ -20,9 +20,15 @@ pub enum LiveEvent {
     /// Like / heartbeat style interactions.
     Like(LikeMsg),
     /// Live started.
-    LiveStart { room_id: u64, timestamp: DateTime<Utc> },
+    LiveStart {
+        room_id: u64,
+        timestamp: DateTime<Utc>,
+    },
     /// Live ended.
-    LiveEnd { room_id: u64, timestamp: DateTime<Utc> },
+    LiveEnd {
+        room_id: u64,
+        timestamp: DateTime<Utc>,
+    },
     /// Watched-count / popularity update.
     WatchedChange { room_id: u64, count: u64 },
 }
@@ -150,6 +156,11 @@ pub struct HighlightSignals {
     pub danmaku_sentiment: Option<f64>,
     pub gift_value: Option<f64>,
     pub audio_energy: Option<f64>,
+    /// Transcript-level LLM score, independent of audience activity.
+    pub semantic: Option<f64>,
+    /// Timeline frame-analysis score.
+    pub visual: Option<f64>,
+    /// Legacy per-candidate vision review score.
     pub multimodal: Option<f64>,
 }
 

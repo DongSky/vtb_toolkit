@@ -63,7 +63,7 @@ describe("CoverPanel", () => {
     ).toContain("anime cat-ear vtuber singing");
   });
 
-  it("generates an image via gpt-image-2 with base url + key + refs", async () => {
+  it("generates an image using saved backend settings and selected references", async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "cover_list")
         return Promise.resolve(["/x/out/cover/frame_00_1000.jpg"]);
@@ -76,12 +76,6 @@ describe("CoverPanel", () => {
 
     // Select the frame as a reference image.
     fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.change(screen.getByTestId("cover-img-base"), {
-      target: { value: "https://relay.example/v1" },
-    });
-    fireEvent.change(screen.getByTestId("cover-img-key"), {
-      target: { value: "sk-test" },
-    });
     fireEvent.change(screen.getByTestId("cover-gen-prompt"), {
       target: { value: "cover art" },
     });
@@ -92,8 +86,6 @@ describe("CoverPanel", () => {
         "cover_generate",
         expect.objectContaining({
           options: expect.objectContaining({
-            base_url: "https://relay.example/v1",
-            api_key: "sk-test",
             prompt: "cover art",
             reference_images: ["/x/out/cover/frame_00_1000.jpg"],
           }),
@@ -102,7 +94,7 @@ describe("CoverPanel", () => {
     );
   });
 
-  it("disables generate until endpoint + key + prompt are set", async () => {
+  it("disables generation until a prompt is supplied", async () => {
     invokeMock.mockResolvedValue([]);
     render(<CoverPanel dir="/x/out" />);
     expect(screen.getByTestId("cover-generate")).toBeDisabled();

@@ -1,14 +1,127 @@
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use vtb_common::{
-    DanmakuMsg, EnterMsg, GiftMsg, GuardBuyMsg, LikeMsg, LiveEvent, SuperChatMsg,
-};
+use vtb_common::{DanmakuMsg, EnterMsg, GiftMsg, GuardBuyMsg, LikeMsg, LiveEvent, SuperChatMsg};
 use vtb_stats::{export_markdown, export_superchats_csv, StatsDb};
 
 const ROOM: u64 = 42;
 const SESSION: &str = "2026-07-17-evening";
 
+#[test]
+fn report_locale_preserves_viewer_authored_text() {
+    let db = StatsDb::open_memory().unwrap();
+    let mut report = db.session_report(SESSION).unwrap();
+    report.top_chatters = vec![("场次统计报告".into(), 2)];
+    for (locale, heading) in [("en", "# Session report:"), ("ja", "# 配信統計レポート：")]
+    {
+        let markdown = vtb_stats::export_markdown_localized(&report, locale);
+        assert!(markdown.starts_with(heading));
+        assert!(markdown.contains("| 场次统计报告 | 2 |"));
+        assert!(!markdown.contains("## 汇总"));
+    }
+}
+
 fn t0() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 7, 17, 12, 0, 0).unwrap()
+}
+
+fn youtube_source(
+    user: &str,
+    message: &str,
+    money: Option<vtb_common::Money>,
+) -> vtb_common::EventSource {
+    vtb_common::EventSource {
+        message_runs: vec![],
+        platform: vtb_common::LivePlatform::Youtube,
+        room_id: "abcdefghijk".into(),
+        user_id: Some(user.into()),
+        message_id: Some(message.into()),
+        money,
+        avatar_url: None,
+        membership: None,
+        sticker_url: None,
+        event_type: None,
+    }
+}
+
+#[test]
+fn youtube_identity_currency_and_deletion_stay_separate_from_bilibili() {
+    let db = StatsDb::open_memory().unwrap();
+    let source = youtube_source("UC1", "m1", None);
+    db.record(SESSION, &danmaku(1, "same", "B站", t0()), t0())
+        .unwrap();
+    db.record_with_source(
+        SESSION,
+        &danmaku(0, "same", "YouTube", t0()),
+        t0(),
+        Some(&source),
+    )
+    .unwrap();
+    let second = youtube_source("UC2", "m2", None);
+    db.record_with_source(
+        SESSION,
+        &danmaku(0, "same", "另一个频道", t0()),
+        t0(),
+        Some(&second),
+    )
+    .unwrap();
+    assert_eq!(db.session_report(SESSION).unwrap().unique_chatters, 3);
+    db.set_note_with_key("youtube:UC1", 0, "same", "频道一", t0())
+        .unwrap();
+    db.set_note(1, "same", "B站备注", t0()).unwrap();
+    assert_eq!(db.list_notes().unwrap().len(), 2);
+    db.record(SESSION, &superchat(1, "same", "bili", 30.0, t0()), t0())
+        .unwrap();
+    for (id, currency, display, amount) in [
+        ("paid1", Some("USD"), "US$20.00", 20.0),
+        ("paid2", Some("JPY"), "JPY 1000", 1000.0),
+        ("paid3", None, "$10.00", 10.0),
+    ] {
+        let source = youtube_source(
+            "UC1",
+            id,
+            Some(vtb_common::Money {
+                currency: currency.map(str::to_string),
+                display: display.into(),
+                amount: Some(amount),
+            }),
+        );
+        db.record_with_source(
+            SESSION,
+            &superchat(0, "same", "yt", amount, t0()),
+            t0(),
+            Some(&source),
+        )
+        .unwrap();
+    }
+    let report = db.session_report(SESSION).unwrap();
+    assert_eq!(report.revenue_total, 30.0);
+    assert_eq!(report.revenue_by_currency["USD"], 20.0);
+    assert_eq!(report.revenue_by_currency["JPY"], 1000.0);
+    assert_eq!(report.unpriced_paid_events, 1);
+    assert!(export_superchats_csv(&report).contains("US$20.00"));
+    assert!(export_markdown(&report).contains("JPY"));
+    db.delete_source_events(SESSION, "youtube:wrong", Some("m1"), None)
+        .unwrap();
+    assert_eq!(db.session_report(SESSION).unwrap().danmaku_count, 3);
+    db.delete_source_events(SESSION, "youtube:abcdefghijk", Some("m1"), None)
+        .unwrap();
+    assert_eq!(db.session_report(SESSION).unwrap().danmaku_count, 2);
+}
+
+#[test]
+fn migrates_existing_database_without_changing_cny_or_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TABLE events (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, room_id INTEGER, received_at TEXT, kind TEXT, uid INTEGER, username TEXT, text TEXT, price REAL, count INTEGER, level INTEGER);
+        INSERT INTO events VALUES (1,'legacy',42,'2026-07-17T12:00:00Z','super_chat',7,'old','hello',50,NULL,NULL);").unwrap();
+    drop(connection);
+    for _ in 0..2 {
+        let db = StatsDb::open(&path).unwrap();
+        let report = db.session_report("legacy").unwrap();
+        assert_eq!(report.sc_total, 50.0);
+        assert_eq!(report.revenue_by_currency["CNY"], 50.0);
+        assert_eq!(report.superchats[0].currency.as_deref(), Some("CNY"));
+    }
 }
 
 fn at(secs: i64) -> DateTime<Utc> {
@@ -41,7 +154,14 @@ fn superchat(uid: u64, username: &str, text: &str, price: f64, ts: DateTime<Utc>
     })
 }
 
-fn gift(uid: u64, username: &str, name: &str, count: u64, total: f64, ts: DateTime<Utc>) -> LiveEvent {
+fn gift(
+    uid: u64,
+    username: &str,
+    name: &str,
+    count: u64,
+    total: f64,
+    ts: DateTime<Utc>,
+) -> LiveEvent {
     LiveEvent::Gift(GiftMsg {
         room_id: ROOM,
         uid,
@@ -54,7 +174,14 @@ fn gift(uid: u64, username: &str, name: &str, count: u64, total: f64, ts: DateTi
     })
 }
 
-fn guard(uid: u64, username: &str, level: u8, count: u64, price: f64, ts: DateTime<Utc>) -> LiveEvent {
+fn guard(
+    uid: u64,
+    username: &str,
+    level: u8,
+    count: u64,
+    price: f64,
+    ts: DateTime<Utc>,
+) -> LiveEvent {
     LiveEvent::GuardBuy(GuardBuyMsg {
         room_id: ROOM,
         uid,
@@ -111,14 +238,26 @@ fn populate(db: &StatsDb) {
         (guard(7, "Whale", 2, 2, 3996.0, at(30)), at(30)),
         // Ignored event kinds.
         (
-            LiveEvent::LiveStart { room_id: ROOM, timestamp: at(0) },
+            LiveEvent::LiveStart {
+                room_id: ROOM,
+                timestamp: at(0),
+            },
             at(0),
         ),
         (
-            LiveEvent::LiveEnd { room_id: ROOM, timestamp: at(40) },
+            LiveEvent::LiveEnd {
+                room_id: ROOM,
+                timestamp: at(40),
+            },
             at(40),
         ),
-        (LiveEvent::WatchedChange { room_id: ROOM, count: 999 }, at(15)),
+        (
+            LiveEvent::WatchedChange {
+                room_id: ROOM,
+                count: 999,
+            },
+            at(15),
+        ),
     ];
     for (ev, ts) in &events {
         db.record(SESSION, ev, *ts).unwrap();
@@ -236,7 +375,10 @@ fn empty_session_report_is_all_zero() {
     let md = export_markdown(&r);
     assert!(md.contains("| 弹幕数 | 0 |"));
     assert!(md.contains("(无)"));
-    assert_eq!(export_superchats_csv(&r), "username,price,text,received_at\n");
+    assert_eq!(
+        export_superchats_csv(&r),
+        "username,price,text,received_at\n"
+    );
 }
 
 #[test]
